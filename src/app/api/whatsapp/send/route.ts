@@ -14,7 +14,6 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
-
 export async function POST(request: Request) {
   try {
     const session = await auth()

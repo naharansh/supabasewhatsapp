@@ -18,6 +18,17 @@ interface Profile {
   avatar_url: string | null;
   role: string | null;
   beta_features: string[];
+  subscription_id: string | null;
+  subscription_ends_at: string | null;
+  subscription: {
+    id: string;
+    name: string;
+    description: string | null;
+    price: number;
+    duration_days: number;
+    features: string[];
+    is_active: boolean;
+  } | null;
 }
 
 interface AuthContextValue {
@@ -57,6 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile({
           ...data,
           beta_features: data.beta_features ?? [],
+          subscription_id: data.subscription_id ?? null,
+          subscription_ends_at: data.subscription_ends_at ?? null,
+          subscription: data.subscription ?? null,
         });
       }
     } catch (err) {

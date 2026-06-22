@@ -19,6 +19,10 @@ import {
   LogOut,
   User,
   ShieldCheck,
+  CreditCard,
+  Check,
+  AlertTriangle,
+  AlertCircle,
   X,
 } from "lucide-react";
 import {
@@ -45,15 +49,18 @@ interface NavItem {
   beta?: boolean;
 }
 
-const navItems: NavItem[] = [
+const alwaysVisibleNav: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/inbox", label: "Inbox", icon: MessageSquare },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/pipelines", label: "Pipelines", icon: GitBranch },
+  { href: "/gallery", label: "Gallery", icon: Image },
+];
+
+const gatedNav: NavItem[] = [
   { href: "/broadcasts", label: "Broadcasts", icon: Radio },
   { href: "/automations", label: "Automations", icon: Zap },
   { href: "/flows", label: "Flows", icon: Workflow, beta: true },
-  { href: "/gallery", label: "Gallery", icon: Image },
 ];
 
 const bottomNavItems = [
@@ -70,6 +77,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const totalUnread = useTotalUnread();
+
+  const allowedMenus = profile?.subscription?.features ?? null;
+  const hasMenuRestrictions = Array.isArray(allowedMenus) && allowedMenus.length > 0;
+
+  const visibleGatedNav = hasMenuRestrictions
+    ? gatedNav.filter((item) => allowedMenus.includes(item.label))
+    : gatedNav;
 
   // Close the drawer when route changes — users opened it to navigate,
   // so once they pick a destination the drawer should get out of the way.
@@ -147,7 +161,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
+            {[...alwaysVisibleNav, ...visibleGatedNav].map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/dashboard" && pathname.startsWith(item.href));
@@ -196,20 +210,36 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
           <ul className="flex flex-col gap-1">
             {profile?.role === "superadmin" && (
-              <li>
-                <Link
-                  href="/admin/users"
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
-                    pathname.startsWith("/admin")
-                      ? "bg-primary/10 text-primary"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-white",
-                  )}
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  Admin
-                </Link>
-              </li>
+              <>
+                <li>
+                  <Link
+                    href="/admin/users"
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
+                      pathname === "/admin/users" || (pathname.startsWith("/admin") && !pathname.startsWith("/admin/subscriptions"))
+                        ? "bg-primary/10 text-primary"
+                        : "text-slate-400 hover:bg-slate-800 hover:text-white",
+                    )}
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    Users
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/admin/subscriptions"
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
+                      pathname.startsWith("/admin/subscriptions")
+                        ? "bg-primary/10 text-primary"
+                        : "text-slate-400 hover:bg-slate-800 hover:text-white",
+                    )}
+                  >
+                    <CreditCard className="h-4 w-4" />
+                    Subscriptions
+                  </Link>
+                </li>
+              </>
             )}
             {bottomNavItems.map((item) => {
               const isActive = pathname.startsWith(item.href);
@@ -232,6 +262,70 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             })}
           </ul>
         </nav>
+
+        {/* Subscription info */}
+        {profile?.subscription && Array.isArray(profile.subscription.features) && profile.subscription.features.length > 0 && (
+          <div className="shrink-0 border-t border-slate-800 px-3 py-3">
+            <div className="rounded-lg bg-slate-800/50 px-3 py-2">
+              <div className="flex items-center gap-2 mb-1.5">
+                <CreditCard className="h-3.5 w-3.5 text-primary" />
+                <span className="text-xs font-medium text-white">{profile.subscription.name}</span>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {profile.subscription.features.map((f, i) => {
+                  const iconMap: Record<string, typeof Check> = {
+                    Broadcasts: Radio,
+                    Automations: Zap,
+                    Flows: Workflow,
+                  };
+                  const Icon = iconMap[f] ?? Check;
+                  return (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                    >
+                      <Icon className="h-2.5 w-2.5" />
+                      {f}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Expiry warning */}
+        {profile?.subscription_ends_at && (() => {
+          const now = new Date();
+          const end = new Date(profile.subscription_ends_at!);
+          const daysLeft = Math.ceil((end.getTime() - now.getTime()) / 86400000);
+
+          if (daysLeft > 7) return null;
+
+          const expired = daysLeft <= 0;
+
+          return (
+            <div className="shrink-0 border-t border-slate-800 px-3 py-2">
+              <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
+                expired
+                  ? "bg-red-500/10 text-red-400"
+                  : "bg-amber-500/10 text-amber-400"
+              }`}>
+                {expired ? (
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                )}
+                <div>
+                  {expired
+                    ? "Subscription expired"
+                    : `Expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`
+                  }
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* User section */}
         <div className="shrink-0 border-t border-slate-800 p-3">

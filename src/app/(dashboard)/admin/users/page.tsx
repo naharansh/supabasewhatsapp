@@ -19,13 +19,24 @@ interface UserItem {
   fullName: string | null;
   role: string;
   status: string;
+  subscription_id: string | null;
+  subscription_ends_at: string | null;
+}
+
+interface SubscriptionOption {
+  id: string;
+  name: string;
+  price: number;
+  duration_days: number;
 }
 
 export default function AdminUsersPage() {
   const { profile } = useAuth();
   const [users, setUsers] = useState<UserItem[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -45,9 +56,21 @@ export default function AdminUsersPage() {
     }
   }, []);
 
+  const fetchSubscriptions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/subscriptions-all");
+      if (res.ok) {
+        const data = await res.json();
+        setSubscriptions(data.subscriptions ?? []);
+      }
+    } catch {
+      // non-critical
+    }
+  }, []);
+
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    Promise.all([fetchUsers(), fetchSubscriptions()]);
+  }, [fetchUsers, fetchSubscriptions]);
 
   const handleAction = async (userId: string, status: "active" | "rejected") => {
     setActionLoading(userId);
@@ -73,6 +96,35 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleAssignSubscription = async (userId: string, subscriptionId: string | null) => {
+    setAssigningId(userId);
+    try {
+      const sub = subscriptionId ? subscriptions.find((s) => s.id === subscriptionId) : null;
+      const subscription_ends_at = sub
+        ? new Date(Date.now() + sub.duration_days * 86400000).toISOString()
+        : null;
+
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, subscription_id: subscriptionId, subscription_ends_at }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error ?? "Failed to assign subscription");
+        return;
+      }
+
+      toast.success(subscriptionId ? "Subscription assigned" : "Subscription removed");
+      fetchUsers();
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setAssigningId(null);
+    }
+  };
+
   if (profile?.role !== "superadmin") {
     return (
       <div className="space-y-6">
@@ -95,7 +147,7 @@ export default function AdminUsersPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">User Management</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Approve or reject new user registrations.
+          Approve or reject new user registrations, and assign subscriptions.
         </p>
       </div>
 
@@ -178,27 +230,51 @@ export default function AdminUsersPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {otherUsers.map((u) => (
-                  <div
-                    key={u.id}
-                    className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-3 px-4"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-white truncate">
-                        {u.fullName || "Unnamed"}
-                      </p>
-                      <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                {otherUsers.map((u) => {
+                  const assignedSub = subscriptions.find((s) => s.id === u.subscription_id);
+                  return (
+                    <div
+                      key={u.id}
+                      className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-3 px-4"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-white truncate">
+                          {u.fullName || "Unnamed"}
+                        </p>
+                        <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                      </div>
+                      <div className="flex items-center gap-3 ml-4 shrink-0">
+                        {assigningId === u.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                        ) : (
+                          <select
+                            value={u.subscription_id ?? ""}
+                            onChange={(e) =>
+                              handleAssignSubscription(
+                                u.id,
+                                e.target.value || null
+                              )
+                            }
+                            className="max-w-40 truncate rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-300 focus:border-primary focus:outline-none"
+                          >
+                            <option value="">No plan</option>
+                            {subscriptions.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name} (₹{s.price}/{s.duration_days}d)
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <span className={`text-xs font-medium ${u.role === "superadmin" ? "text-amber-400" : "text-slate-500"}`}>
+                          {u.role}
+                        </span>
+                        <span className={`text-xs font-medium ${u.status === "active" ? "text-green-400" : u.status === "rejected" ? "text-red-400" : "text-amber-400"}`}>
+                          {u.status}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 ml-4 shrink-0">
-                      <span className={`text-xs font-medium ${u.role === "superadmin" ? "text-amber-400" : "text-slate-500"}`}>
-                        {u.role}
-                      </span>
-                      <span className={`text-xs font-medium ${u.status === "active" ? "text-green-400" : u.status === "rejected" ? "text-red-400" : "text-amber-400"}`}>
-                        {u.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

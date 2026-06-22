@@ -409,3 +409,21 @@ export interface AutomationLog {
   created_at: string;
   contact?: Contact;
 }
+
+export interface Subscription {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  duration_days: number;
+  features: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserSubscription {
+  subscription_id: string | null;
+  subscription_ends_at: string | null;
+  subscription: Subscription | null;
+}

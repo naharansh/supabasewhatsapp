@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Settings, MessageSquare, Tag, User, Palette } from 'lucide-react';
+import { Settings, MessageSquare, Tag, User, Palette, CreditCard } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
@@ -11,9 +11,11 @@ import { PasswordForm } from '@/components/settings/password-form';
 import { SessionsCard } from '@/components/settings/sessions-card';
 import { TwoFactorForm } from '@/components/settings/two-factor-form';
 import { AppearancePanel } from '@/components/settings/appearance-panel';
+import { SubscriptionCard } from '@/components/settings/subscription-card';
 
 const TAB_VALUES = [
   'profile',
+  'subscription',
   'whatsapp',
   'templates',
   'tags',
@@ -62,6 +64,13 @@ export default function SettingsPage() {
             Profile
           </TabsTrigger>
           <TabsTrigger
+            value="subscription"
+            className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
+          >
+            <CreditCard className="size-4" />
+            Subscription
+          </TabsTrigger>
+          <TabsTrigger
             value="whatsapp"
             className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
           >
@@ -96,6 +105,10 @@ export default function SettingsPage() {
           <PasswordForm />
           <TwoFactorForm />
           <SessionsCard />
+        </TabsContent>
+
+        <TabsContent value="subscription" className="space-y-6">
+          <SubscriptionCard />
         </TabsContent>
 
         <TabsContent value="whatsapp">
