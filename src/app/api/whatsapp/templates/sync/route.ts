@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 const META_API_VERSION = 'v21.0'
@@ -57,7 +57,7 @@ export async function POST() {
     }
     const userId = session.user.id
 
-    const supabase = await createClient()
+    const supabase = createAdminClient()
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')

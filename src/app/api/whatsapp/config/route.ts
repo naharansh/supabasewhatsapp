@@ -16,7 +16,7 @@ export async function GET() {
 
     const { data: config, error } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
+      .select('phone_number_id, waba_id, access_token, status')
       .eq('user_id', userId)
       .maybeSingle()
 
@@ -27,6 +27,7 @@ export async function GET() {
         {
           connected: false,
           reason: 'no_config',
+          config: null,
           message: 'No WhatsApp configuration saved yet. Fill in the form and click Save Configuration.',
         },
         { status: 200 }
@@ -43,6 +44,7 @@ export async function GET() {
           connected: false,
           reason: 'token_corrupted',
           needs_reset: true,
+          config: { phone_number_id: config.phone_number_id, waba_id: config.waba_id },
           message:
             'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
         },
@@ -55,7 +57,11 @@ export async function GET() {
         phoneNumberId: config.phone_number_id,
         accessToken,
       })
-      return NextResponse.json({ connected: true, phone_info: phoneInfo })
+      return NextResponse.json({
+        connected: true,
+        phone_info: phoneInfo,
+        config: { phone_number_id: config.phone_number_id, waba_id: config.waba_id },
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
       console.error('[whatsapp/config GET] Meta API verification failed:', message)
@@ -63,6 +69,7 @@ export async function GET() {
         {
           connected: false,
           reason: 'meta_api_error',
+          config: { phone_number_id: config.phone_number_id, waba_id: config.waba_id },
           message: `Meta API rejected the credentials: ${message}`,
         },
         { status: 200 }
