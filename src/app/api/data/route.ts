@@ -108,6 +108,11 @@ export async function POST(request: Request) {
       case 'update': {
         const { values, filters = [] } = body
         query = supabase.from(table).update(values)
+
+        if (TABLES_WITH_USER_ID.includes(table)) {
+          query = query.eq('user_id', userId)
+        }
+
         for (const f of filters) {
           if (f.operator === 'eq') {
             query = query.eq(f.column, f.value)
@@ -130,6 +135,11 @@ export async function POST(request: Request) {
       case 'delete': {
         const { filters = [] } = body
         query = supabase.from(table).delete()
+
+        if (TABLES_WITH_USER_ID.includes(table)) {
+          query = query.eq('user_id', userId)
+        }
+
         for (const f of filters) {
           if (f.operator === 'eq') {
             query = query.eq(f.column, f.value)
@@ -144,7 +154,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Unknown action: '${action}'` }, { status: 400 })
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error'
     console.error('Data API error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

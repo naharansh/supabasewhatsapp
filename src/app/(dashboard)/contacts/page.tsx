@@ -220,7 +220,7 @@ export default function ContactsPage() {
     const json = await res.json();
 
     if (json.error) {
-      toast.error('Failed to delete contact');
+      toast.error(`Failed to delete contact: ${json.error}`);
     } else {
       toast.success('Contact deleted');
       fetchContacts();
