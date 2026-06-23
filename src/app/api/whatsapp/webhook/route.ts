@@ -305,7 +305,10 @@ async function handleStatusUpdate(status: {
   // `failed` only from pre-delivered states.
   if (!isValidStatusTransition(recipient.status, status.status)) return
 
-  const update: Record<string, unknown> = { status: status.status }
+  // Clear error_message whenever the recipient advances to a
+  // non-terminal success state — guards against stale error text
+  // lingering from a failed broadcast attempt.
+  const update: Record<string, unknown> = { status: status.status, error_message: null }
   if (status.status === 'sent') update.sent_at = tsIso
   if (status.status === 'delivered') update.delivered_at = tsIso
   if (status.status === 'read') update.read_at = tsIso

@@ -533,6 +533,26 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             }
 
             if (result.status === 'sent') {
+              // Step 1: Store Meta message_id immediately so the webhook
+              // can find this recipient for status updates. Closes the
+              // race window between Meta's 200 OK and our status write.
+              await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'update',
+                  table: 'broadcast_recipients',
+                  values: {
+                    whatsapp_message_id: result.whatsapp_message_id ?? null,
+                  },
+                  filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+                }),
+              });
+
+              // Step 2: Mark as sent — only if the webhook hasn't
+              // already transitioned the status (e.g. to 'failed').
+              // If the webhook already moved it, skip to avoid
+              // overwriting a terminal state.
               await fetch('/api/data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -542,10 +562,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                   values: {
                     status: 'sent',
                     sent_at: new Date().toISOString(),
-                    whatsapp_message_id: result.whatsapp_message_id ?? null,
                     error_message: null,
                   },
-                  filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+                  filters: [
+                    { column: 'id', operator: 'eq', value: recipient.id },
+                    { column: 'status', operator: 'eq', value: 'pending' },
+                  ],
                 }),
               });
             } else {
