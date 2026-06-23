@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function GET(request: Request) {
@@ -16,11 +15,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const supabase = await createClient();
   const admin = createAdminClient();
 
   const [profileResult, authUserResult, subscriptionResult] = await Promise.all([
-    supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
+    admin.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
     admin.auth.admin.getUserById(userId),
     admin.from('profiles').select('subscription_id, subscription_ends_at, subscriptions(id, name, description, price, duration_days, features, is_active)').eq('user_id', userId).maybeSingle(),
   ]);
