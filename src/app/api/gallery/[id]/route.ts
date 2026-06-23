@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function DELETE(
   _request: Request,
@@ -13,20 +13,17 @@ export async function DELETE(
 
   const { id } = await params;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: image, error: fetchError } = await supabase
     .from("gallery_images")
     .select("*")
     .eq("id", id)
+    .eq("user_id", session.user.id)
     .single();
 
   if (fetchError || !image) {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
-  }
-
-  if (image.user_id !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { error: storageError } = await supabase.storage

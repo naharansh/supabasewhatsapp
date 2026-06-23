@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
   _request: Request,
@@ -13,20 +13,17 @@ export async function GET(
 
   const { id } = await params;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: gallery, error } = await supabase
     .from("galleries")
     .select("*, gallery_images(count)")
     .eq("id", id)
+    .eq("user_id", session.user.id)
     .single();
 
   if (error || !gallery) {
     return NextResponse.json({ error: "Gallery not found" }, { status: 404 });
-  }
-
-  if (gallery.user_id !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   return NextResponse.json({ gallery });
@@ -47,20 +44,17 @@ export async function PUT(
     const body = await request.json();
     const { name, description } = body;
 
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { data: existing, error: fetchError } = await supabase
       .from("galleries")
       .select("*")
       .eq("id", id)
+      .eq("user_id", session.user.id)
       .single();
 
     if (fetchError || !existing) {
       return NextResponse.json({ error: "Gallery not found" }, { status: 404 });
-    }
-
-    if (existing.user_id !== session.user.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const updates: Record<string, string> = {};
@@ -100,20 +94,17 @@ export async function DELETE(
 
   const { id } = await params;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: existing, error: fetchError } = await supabase
     .from("galleries")
     .select("*, gallery_images(storage_path)")
     .eq("id", id)
+    .eq("user_id", session.user.id)
     .single();
 
   if (fetchError || !existing) {
     return NextResponse.json({ error: "Gallery not found" }, { status: 404 });
-  }
-
-  if (existing.user_id !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const storagePaths = (existing.gallery_images ?? []).map(

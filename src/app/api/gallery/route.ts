@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const galleryId = searchParams.get("gallery_id");
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from("gallery_images")
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
       .slice(0, 100);
     const storagePath = `${session.user.id}/${timestamp}-${sanitizedName}`;
 
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { error: uploadError } = await supabase.storage
       .from("images")
