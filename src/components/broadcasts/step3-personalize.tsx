@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { Contact, CustomField, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,32 +70,58 @@ export function Step3Personalize({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const supabase = createClient();
       const [fieldsRes, contactRes] = await Promise.all([
-        supabase.from('custom_fields').select('*').order('field_name'),
-        supabase
-          .from('contacts')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+        fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'custom_fields',
+            order: { column: 'field_name' },
+          }),
+        }),
+        fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            limit: 1,
+            order: { column: 'created_at', ascending: false },
+            single: true,
+          }),
+        }),
       ]);
       if (cancelled) return;
 
-      setCustomFields(fieldsRes.data ?? []);
+      if (fieldsRes.ok) {
+        const json = await fieldsRes.json();
+        setCustomFields(json.data ?? []);
+      }
       setLoadingFields(false);
 
-      const contact = contactRes.data ?? null;
+      let contact: Contact | null = null;
+      if (contactRes.ok) {
+        const json = await contactRes.json();
+        contact = json.data ?? null;
+      }
       setFirstContact(contact);
 
       if (contact) {
-        const { data: customVals } = await supabase
-          .from('contact_custom_values')
-          .select('custom_field_id, value')
-          .eq('contact_id', contact.id);
-        if (!cancelled) {
+        const cvRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contact_custom_values',
+            select: 'custom_field_id, value',
+            filters: [{ column: 'contact_id', operator: 'eq', value: contact.id }],
+          }),
+        });
+        if (!cancelled && cvRes.ok) {
+          const json = await cvRes.json();
           const map = new Map<string, string>();
-          for (const row of customVals ?? []) {
+          for (const row of json.data ?? []) {
             map.set(row.custom_field_id, row.value ?? '');
           }
           setFirstContactCustomValues(map);

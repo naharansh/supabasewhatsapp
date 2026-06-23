@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { BroadcastRecipient, Contact, MessageTemplate } from '@/types';
 
@@ -134,23 +133,28 @@ export function resolveVariables(
  * index keyed by contact_id → field_id → value.
  */
 async function fetchCustomValueIndex(
-  supabase: ReturnType<typeof createClient>,
   contactIds: string[],
 ): Promise<CustomValueIndex> {
   const index: CustomValueIndex = new Map();
   if (contactIds.length === 0) return index;
 
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
   const PAGE = 500;
   for (let i = 0; i < contactIds.length; i += PAGE) {
     const slice = contactIds.slice(i, i + PAGE);
-    const { data } = await supabase
-      .from('contact_custom_values')
-      .select('contact_id, custom_field_id, value')
-      .in('contact_id', slice);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contact_custom_values',
+        select: 'contact_id, custom_field_id, value',
+        filters: [{ column: 'contact_id', operator: 'in', value: slice }],
+      }),
+    });
+    if (!res.ok) continue;
+    const json = await res.json();
 
-    for (const row of data ?? []) {
+    for (const row of json.data ?? []) {
       const bucket = index.get(row.contact_id) ?? new Map<string, string>();
       bucket.set(row.custom_field_id, row.value ?? '');
       index.set(row.contact_id, bucket);
@@ -165,53 +169,74 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [progress, setProgress] = useState(0);
 
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
-    const supabase = createClient();
-
     let contacts: Contact[] = [];
 
     if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'select', table: 'contacts' }),
+      });
+      if (!res.ok) throw new Error('Failed to fetch contacts');
+      const json = await res.json();
+      contacts = json.data ?? [];
     } else if (
       audience.type === 'tags' &&
       audience.tagIds &&
       audience.tagIds.length > 0
     ) {
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.tagIds);
+      const tagRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contact_tags',
+          select: 'contact_id',
+          filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
+        }),
+      });
+      if (!tagRes.ok) throw new Error('Failed to fetch contact tags');
+      const tagJson = await tagRes.json();
 
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
+      if (tagJson.data && tagJson.data.length > 0) {
         const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
+          ...new Set(tagJson.data.map((ct: { contact_id: string }) => ct.contact_id)),
         ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
+        const contactRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            filters: [{ column: 'id', operator: 'in', value: uniqueContactIds }],
+          }),
+        });
+        if (!contactRes.ok) throw new Error('Failed to fetch contacts');
+        const contactJson = await contactRes.json();
+        contacts = contactJson.data ?? [];
       }
     } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(supabase, audience.customField);
+      contacts = await resolveCustomFieldAudience(audience.customField);
     } else if (audience.type === 'csv' && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
+      contacts = await upsertCsvContacts(audience.csvContacts);
     }
 
-    // Apply exclude tags (works across all contact-derived audience
-    // types). CSV contacts are synthetic so exclusion doesn't apply.
     if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
+      const excludeRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contact_tags',
+          select: 'contact_id',
+          filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
+        }),
+      });
+      if (excludeRes.ok) {
+        const excludeJson = await excludeRes.json();
+        const excludedIds = new Set((excludeJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        contacts = contacts.filter((c) => !excludedIds.has(c.id));
+      }
     }
 
     return contacts;
@@ -229,7 +254,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
    * broadcast silently created zero recipients.
    */
   async function upsertCsvContacts(
-    supabase: ReturnType<typeof createClient>,
     csvRows: { phone: string; name?: string }[],
   ): Promise<Contact[]> {
     if (csvRows.length === 0) return [];
@@ -238,30 +262,29 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       throw new Error('You are not signed in.');
     }
 
-    // De-duplicate by phone within the CSV (users can paste duplicates).
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
     for (const row of csvRows) {
       if (row.phone) uniqueByPhone.set(row.phone, row);
     }
     const phones = [...uniqueByPhone.keys()];
 
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
+    const lookupRes = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contacts',
+        filters: [{ column: 'phone', operator: 'in', value: phones }],
+      }),
+    });
+    if (!lookupRes.ok) throw new Error('Failed to look up CSV contacts');
+    const lookupJson = await lookupRes.json();
 
     const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
+    for (const c of (lookupJson.data ?? []) as Contact[]) {
       if (c.phone) byPhone.set(c.phone, c);
     }
 
-    // Insert only missing contacts, in one batch per 200 rows (PostgREST
-    // has a default payload cap — 200 keeps individual requests small).
     const missing = phones
       .filter((p) => !byPhone.has(p))
       .map((phone) => ({
@@ -273,69 +296,73 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     const INSERT_CHUNK = 200;
     for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
       const chunk = missing.slice(i, i + INSERT_CHUNK);
-      const { data: inserted, error: insertErr } = await supabase
-        .from('contacts')
-        .insert(chunk)
-        .select();
-      if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
-      }
-      for (const c of (inserted ?? []) as Contact[]) {
+      const insertRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'contacts',
+          values: chunk,
+          select: true,
+        }),
+      });
+      if (!insertRes.ok) throw new Error('Failed to create CSV contacts');
+      const insertJson = await insertRes.json();
+      for (const c of (insertJson.data ?? []) as Contact[]) {
         if (c.phone) byPhone.set(c.phone, c);
       }
     }
 
-    // Preserve input order so analytics roughly matches the CSV order.
     return phones
       .map((p) => byPhone.get(p))
       .filter((c): c is Contact => Boolean(c));
   }
 
   async function resolveCustomFieldAudience(
-    supabase: ReturnType<typeof createClient>,
     filter: CustomFieldFilter,
   ): Promise<Contact[]> {
     const { fieldId, operator, value } = filter;
+    const op = operator === 'contains' ? 'ilike' : operator === 'is_not' ? 'neq' : 'eq';
+    const val = operator === 'contains' ? `%${value}%` : value;
 
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
+    const matchRes = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contact_custom_values',
+        select: 'contact_id',
+        filters: [
+          { column: 'custom_field_id', operator: 'eq', value: fieldId },
+          { column: 'value', operator: op, value: val },
+        ],
+      }),
+    });
+    if (!matchRes.ok) throw new Error('Custom-field filter failed');
+    const matchJson = await matchRes.json();
 
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains') query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
+    const contactIds = [...new Set((matchJson.data ?? []).map((m: { contact_id: string }) => m.contact_id))];
     if (contactIds.length === 0) return [];
 
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
+    const contactRes = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contacts',
+        filters: [{ column: 'id', operator: 'in', value: contactIds }],
+      }),
+    });
+    if (!contactRes.ok) throw new Error('Failed to fetch contacts');
+    const contactJson = await contactRes.json();
+    return contactJson.data ?? [];
   }
 
   async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
     setIsProcessing(true);
     setProgress(0);
 
-    const supabase = createClient();
-
     try {
-      // ── Step 0: Resolve current user ──────────────────────────────
-      // broadcasts.user_id is NOT NULL + guarded by RLS
-      // (auth.uid() = user_id). Without this, the INSERT below was
-      // silently failing with 23502 / 42501 — the wizard would
-      // no-op with no feedback.
       if (!user) {
         throw new Error('You are not signed in.');
       }
@@ -350,36 +377,39 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
-      const { data: broadcast, error: broadcastError } = await supabase
-        .from('broadcasts')
-        .insert({
-          user_id: user.id,
-          name: payload.name,
-          template_name: payload.template.name,
-          template_language: payload.template.language ?? 'en_US',
-          template_variables: payload.variables,
-          audience_filter: {
-            type: payload.audience.type,
-            tagIds: payload.audience.tagIds,
-            customField: payload.audience.customField,
-            excludeTagIds: payload.audience.excludeTagIds,
+      const bcRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'broadcasts',
+          values: {
+            user_id: user.id,
+            name: payload.name,
+            template_name: payload.template.name,
+            template_language: payload.template.language ?? 'en_US',
+            template_variables: payload.variables,
+            audience_filter: {
+              type: payload.audience.type,
+              tagIds: payload.audience.tagIds,
+              customField: payload.audience.customField,
+              excludeTagIds: payload.audience.excludeTagIds,
+            },
+            status: 'sending',
+            total_recipients: contacts.length,
+            sent_count: 0,
+            delivered_count: 0,
+            read_count: 0,
+            replied_count: 0,
+            failed_count: 0,
           },
-          status: 'sending',
-          total_recipients: contacts.length,
-          sent_count: 0,
-          delivered_count: 0,
-          read_count: 0,
-          replied_count: 0,
-          failed_count: 0,
-        })
-        .select()
-        .single();
-
-      if (broadcastError || !broadcast) {
-        throw new Error(
-          `Failed to create broadcast: ${broadcastError?.message ?? 'unknown error'}`,
-        );
-      }
+          select: true,
+        }),
+      });
+      if (!bcRes.ok) throw new Error('Failed to create broadcast');
+      const bcJson = await bcRes.json();
+      const broadcast = bcJson.data?.[0];
+      if (!broadcast) throw new Error('Failed to create broadcast');
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
       setProgress(20);
@@ -391,48 +421,52 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
-        const { error: recipientError } = await supabase
-          .from('broadcast_recipients')
-          .insert(batch);
-        if (recipientError) {
-          // Previous impl logged and marched on — the broadcast then ran
-          // with an incomplete recipient set, so webhook status updates
-          // couldn't find some rows and the aggregate counts drifted.
-          // Flip the broadcast to failed so the user sees the problem
-          // immediately, then throw to abort the send loop.
-          await supabase
-            .from('broadcasts')
-            .update({
-              status: 'failed',
-              failed_count: contacts.length,
-            })
-            .eq('id', broadcast.id);
+        const insRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'insert',
+            table: 'broadcast_recipients',
+            values: batch,
+          }),
+        });
+        if (!insRes.ok) {
+          await fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'update',
+              table: 'broadcasts',
+              values: { status: 'failed', failed_count: contacts.length },
+              filters: [{ column: 'id', operator: 'eq', value: broadcast.id }],
+            }),
+          });
           throw new Error(
-            `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
+            `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}`,
           );
         }
       }
 
       // ── Step 4: Fetch recipients (joined contact) + preload custom values
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
+      const recsRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'broadcast_recipients',
+          select: '*, contact:contacts(*)',
+          filters: [{ column: 'broadcast_id', operator: 'eq', value: broadcast.id }],
+        }),
+      });
+      if (!recsRes.ok) throw new Error('Failed to fetch broadcast recipients');
+      const recsJson = await recsRes.json();
+      const recipients = recsJson.data ?? [];
 
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
-
-      // One bulk fetch of custom values for every contact in this
-      // broadcast, avoiding N+1 during the send loop.
       const contactIds = recipients
         .map((r: BroadcastRecipient) => r.contact?.id)
         .filter((id: string | undefined): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contactIds,
-      );
+      const customValueIndex = await fetchCustomValueIndex(contactIds);
 
       let failedCount = 0;
       const totalRecipients = recipients.length;
@@ -485,47 +519,62 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
             if (!result) {
               failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: 'No phone number on contact',
-                })
-                .eq('id', recipient.id);
+              await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'update',
+                  table: 'broadcast_recipients',
+                  values: { status: 'failed', error_message: 'No phone number on contact' },
+                  filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+                }),
+              });
               continue;
             }
 
             if (result.status === 'sent') {
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'sent',
-                  sent_at: new Date().toISOString(),
-                  whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: null,
-                })
-                .eq('id', recipient.id);
+              await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'update',
+                  table: 'broadcast_recipients',
+                  values: {
+                    status: 'sent',
+                    sent_at: new Date().toISOString(),
+                    whatsapp_message_id: result.whatsapp_message_id ?? null,
+                    error_message: null,
+                  },
+                  filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+                }),
+              });
             } else {
               failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
-                })
-                .eq('id', recipient.id);
+              await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'update',
+                  table: 'broadcast_recipients',
+                  values: { status: 'failed', error_message: result.error ?? 'Unknown error' },
+                  filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+                }),
+              });
             }
           }
         } catch (err) {
           for (const recipient of batch) {
             failedCount++;
-            await supabase
-              .from('broadcast_recipients')
-              .update({
-                status: 'failed',
-                error_message: err instanceof Error ? err.message : 'Unknown error',
-              })
-              .eq('id', recipient.id);
+            await fetch('/api/data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'update',
+                table: 'broadcast_recipients',
+                values: { status: 'failed', error_message: err instanceof Error ? err.message : 'Unknown error' },
+                filters: [{ column: 'id', operator: 'eq', value: recipient.id }],
+              }),
+            });
           }
         }
 
@@ -539,14 +588,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
 
       // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
       setProgress(95);
       const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus })
-        .eq('id', broadcast.id);
+      await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          table: 'broadcasts',
+          values: { status: finalStatus },
+          filters: [{ column: 'id', operator: 'eq', value: broadcast.id }],
+        }),
+      });
 
       setProgress(100);
       return broadcast.id;

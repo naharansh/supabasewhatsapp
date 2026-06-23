@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -96,9 +95,19 @@ export function Step2SelectAudience({
     async function fetchTags() {
       setLoadingTags(true);
       try {
-        const supabase = createClient();
-        const { data } = await supabase.from('tags').select('*').order('name');
-        setTags(data ?? []);
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'tags',
+            order: { column: 'name' },
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          setTags(json.data ?? []);
+        }
       } finally {
         setLoadingTags(false);
       }
@@ -112,12 +121,19 @@ export function Step2SelectAudience({
     async function fetchFields() {
       setLoadingFields(true);
       try {
-        const supabase = createClient();
-        const { data } = await supabase
-          .from('custom_fields')
-          .select('*')
-          .order('field_name');
-        setCustomFields(data ?? []);
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'custom_fields',
+            order: { column: 'field_name' },
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          setCustomFields(json.data ?? []);
+        }
       } finally {
         setLoadingFields(false);
       }
@@ -128,8 +144,6 @@ export function Step2SelectAudience({
   const fetchEstimatedCount = useCallback(async () => {
     setLoadingCount(true);
     try {
-      const supabase = createClient();
-
       // Base query — produces the superset before exclude is applied.
       let baseIds: Set<string> | null = null; // null means "all contacts"
 
@@ -140,26 +154,45 @@ export function Step2SelectAudience({
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contact_tags',
+            select: 'contact_id',
+            filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          baseIds = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        }
       } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
         const { fieldId, operator, value } = audience.customField;
-        let q = supabase
-          .from('contact_custom_values')
-          .select('contact_id')
-          .eq('custom_field_id', fieldId);
-        if (operator === 'is') q = q.eq('value', value);
-        else if (operator === 'is_not') q = q.neq('value', value);
-        else q = q.ilike('value', `%${value}%`);
-        const { data } = await q;
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        const op = operator === 'contains' ? 'ilike' : operator === 'is_not' ? 'neq' : 'eq';
+        const val = operator === 'contains' ? `%${value}%` : value;
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contact_custom_values',
+            select: 'contact_id',
+            filters: [
+              { column: 'custom_field_id', operator: 'eq', value: fieldId },
+              { column: 'value', operator: op, value: val },
+            ],
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          baseIds = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        }
       } else if (
         audience.type === 'csv' &&
         audience.csvContacts &&
@@ -168,7 +201,6 @@ export function Step2SelectAudience({
         setEstimatedCount(audience.csvContacts.length);
         return;
       } else {
-        // Partially-configured audience — wait for the user to finish.
         setEstimatedCount(null);
         return;
       }
@@ -176,11 +208,20 @@ export function Step2SelectAudience({
       // Apply exclude tags
       let excludeSet: Set<string> | null = null;
       if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const { data: excludeRows } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.excludeTagIds);
-        excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contact_tags',
+            select: 'contact_id',
+            filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          excludeSet = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        }
       }
 
       if (baseIds) {
@@ -189,12 +230,20 @@ export function Step2SelectAudience({
         );
         setEstimatedCount(effective.length);
       } else {
-        // "All" — fetch the total, then subtract exclude set if any.
-        const { count } = await supabase
-          .from('contacts')
-          .select('*', { count: 'exact', head: true });
-        const total = count ?? 0;
-        setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            count: true,
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const total = json.count ?? 0;
+          setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
+        }
       }
     } finally {
       setLoadingCount(false);
