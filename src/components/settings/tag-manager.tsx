@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Plus, X, Loader2 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,7 +30,6 @@ const PRESET_COLORS = [
 ];
 
 export function TagManager() {
-  const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -58,14 +56,18 @@ export function TagManager() {
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from('tags')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setTags(data || []);
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'tags',
+          order: { column: 'created_at', ascending: true },
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to load tags');
+      const json = await res.json();
+      setTags(json.data || []);
     } catch (err) {
       console.error('Failed to fetch tags:', err);
       toast.error('Failed to load tags');
@@ -87,15 +89,20 @@ export function TagManager() {
         return;
       }
 
-      const { error } = await supabase
-        .from('tags')
-        .insert({
-          user_id: user.id,
-          name: newTagName.trim(),
-          color: selectedColor,
-        });
-
-      if (error) throw error;
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'tags',
+          values: {
+            user_id: user.id,
+            name: newTagName.trim(),
+            color: selectedColor,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create tag');
 
       toast.success('Tag created successfully');
       setDialogOpen(false);
@@ -120,12 +127,16 @@ export function TagManager() {
 
     try {
       setDeleting(true);
-      const { error } = await supabase
-        .from('tags')
-        .delete()
-        .eq('id', tagToDelete.id);
-
-      if (error) throw error;
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          table: 'tags',
+          filters: [{ column: 'id', operator: 'eq', value: tagToDelete.id }],
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to delete tag');
 
       toast.success('Tag deleted');
       setTags((prev) => prev.filter((t) => t.id !== tagToDelete.id));

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import type { MessageTemplate } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -76,24 +75,26 @@ export function TemplatePicker({
         return;
       }
 
-      const supabase = createClient();
-
-      // Only Approved templates are sendable through Meta — anything else
-      // would 400 on the send route. Hide them rather than letting the
-      // user pick a template that will be rejected.
-      const { data, error } = await supabase
-        .from("message_templates")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("status", "Approved")
-        .order("created_at", { ascending: false });
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "message_templates",
+          filters: [
+            { column: "status", operator: "eq", value: "Approved" },
+          ],
+          order: { column: "created_at", ascending: false },
+        }),
+      });
+      const json = await res.json();
 
       if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch templates:", error);
+      if (json.error) {
+        console.error("Failed to fetch templates:", json.error);
         setTemplates([]);
       } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
+        setTemplates((json.data as MessageTemplate[]) ?? []);
       }
       setLoading(false);
     })();

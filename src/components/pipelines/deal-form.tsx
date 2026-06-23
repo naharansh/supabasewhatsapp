@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
-import { createClient } from "@/lib/supabase/client";
 import type {
   Contact,
   Conversation,
@@ -51,7 +50,6 @@ export function DealForm({
   defaultStageId,
   onSaved,
 }: DealFormProps) {
-  const supabase = createClient();
   const { user } = useAuth();
 
   const [title, setTitle] = useState("");
@@ -104,15 +102,23 @@ export function DealForm({
   }, [open, deal, defaultStageId, stages]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Load supporting data once the sheet is open
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+      const [cRes, pRes] = await Promise.all([
+        fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "select", table: "contacts", order: { column: "name" } }),
+        }),
+        fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "select", table: "profiles", order: { column: "full_name" } }),
+        }),
       ]);
+      const [c, p] = await Promise.all([cRes.json(), pRes.json()]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
       setProfiles((p.data ?? []) as Profile[]);
@@ -120,33 +126,34 @@ export function DealForm({
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open]);
 
-  // Fetch linked conversation for the selected contact (newest open one).
-  // Clearing on no-selection is sync with prop state; the populated
-  // case runs setLinkedConversation inside the async fetch callback.
   useEffect(() => {
     if (!open || !contactId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLinkedConversation(null);
       return;
     }
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from("conversations")
-        .select("*")
-        .eq("contact_id", contactId)
-        .order("last_message_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "conversations",
+          single: true,
+          filters: [{ column: "contact_id", operator: "eq", value: contactId }],
+          order: { column: "last_message_at", ascending: false },
+        }),
+      });
+      const json = await res.json();
       if (cancelled) return;
-      setLinkedConversation((data as Conversation | null) ?? null);
+      setLinkedConversation((json.data as Conversation | null) ?? null);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, contactId, supabase]);
+  }, [open, contactId]);
 
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
@@ -168,11 +175,18 @@ export function DealForm({
     };
 
     if (deal) {
-      const { error } = await supabase
-        .from("deals")
-        .update(payload)
-        .eq("id", deal.id);
-      if (error) {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          table: "deals",
+          values: payload,
+          filters: [{ column: "id", operator: "eq", value: deal.id }],
+        }),
+      });
+      const json = await res.json();
+      if (json.error) {
         toast.error("Failed to save deal");
         setSaving(false);
         return;
@@ -183,10 +197,17 @@ export function DealForm({
         setSaving(false);
         return;
       }
-      const { error } = await supabase
-        .from("deals")
-        .insert({ ...payload, user_id: user.id, status: "open" });
-      if (error) {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "insert",
+          table: "deals",
+          values: { ...payload, user_id: user.id, status: "open" },
+        }),
+      });
+      const json = await res.json();
+      if (json.error) {
         toast.error("Failed to create deal");
         setSaving(false);
         return;
@@ -202,12 +223,19 @@ export function DealForm({
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
-    const { error } = await supabase
-      .from("deals")
-      .update({ status })
-      .eq("id", deal.id);
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "update",
+        table: "deals",
+        values: { status },
+        filters: [{ column: "id", operator: "eq", value: deal.id }],
+      }),
+    });
+    const json = await res.json();
     setStatusAction(null);
-    if (error) {
+    if (json.error) {
       toast.error("Failed to update deal status");
       return;
     }
@@ -221,9 +249,18 @@ export function DealForm({
   async function handleDelete() {
     if (!deal) return;
     setDeleting(true);
-    const { error } = await supabase.from("deals").delete().eq("id", deal.id);
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        table: "deals",
+        filters: [{ column: "id", operator: "eq", value: deal.id }],
+      }),
+    });
+    const json = await res.json();
     setDeleting(false);
-    if (error) {
+    if (json.error) {
       toast.error("Failed to delete deal");
       return;
     }

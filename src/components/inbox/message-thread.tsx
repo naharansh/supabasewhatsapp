@@ -175,24 +175,26 @@ export function MessageThread({
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
 
-  // Profiles are bounded by RLS to rows the current user is allowed to
-  // see — today that's just the current user, but the dropdown keeps the
-  // shape ready for shared-team workspaces without a refactor.
   useEffect(() => {
     let cancelled = false;
-    const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name")
-      .then(({ data, error }: { data: Profile[] | null; error: any }) => {
-        if (cancelled) return;
-        if (error) {
-          console.error("Failed to fetch profiles:", error);
-          return;
-        }
-        setProfiles((data as Profile[]) ?? []);
+    (async () => {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "profiles",
+          order: { column: "full_name" },
+        }),
       });
+      const json = await res.json();
+      if (cancelled) return;
+      if (json.error) {
+        console.error("Failed to fetch profiles:", json.error);
+        return;
+      }
+      setProfiles((json.data as Profile[]) ?? []);
+    })();
     return () => {
       cancelled = true;
     };
@@ -247,24 +249,29 @@ export function MessageThread({
   useEffect(() => {
     if (!conversationId) return;
 
-    const supabase = createClient();
     let cancelled = false;
 
     (async () => {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "messages",
+          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
+          order: { column: "created_at", ascending: true },
+        }),
+      });
+      const json = await res.json();
 
       if (cancelled) return;
 
-      if (error) {
-        console.error("Failed to fetch messages:", error);
+      if (json.error) {
+        console.error("Failed to fetch messages:", json.error);
       } else {
-        onMessagesLoadedRef.current(data ?? []);
+        onMessagesLoadedRef.current(json.data ?? []);
       }
 
       if (!cancelled) setLoading(false);
@@ -273,35 +280,32 @@ export function MessageThread({
     return () => {
       cancelled = true;
     };
-    // `resyncToken` is included so the parent can force a refetch when
-    // the realtime channel reconnects or the tab regains focus —
-    // realtime is best-effort and any message events sent while the WS
-    // was disconnected or throttled are otherwise lost.
   }, [conversationId, resyncToken]);
 
-  // Reactions fetch — pulls the current state from the DB. Kept separate
-  // from the channel subscription below so a `resyncToken` bump just
-  // refetches the rows without also tearing down and rebuilding the
-  // realtime channel.
   useEffect(() => {
     if (!conversationId) {
       setReactions([]);
       return;
     }
-    const supabase = createClient();
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("message_reactions")
-        .select("*")
-        .eq("conversation_id", conversationId);
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "message_reactions",
+          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
+        }),
+      });
+      const json = await res.json();
       if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch reactions:", error);
+      if (json.error) {
+        console.error("Failed to fetch reactions:", json.error);
         return;
       }
-      setReactions((data as MessageReaction[]) ?? []);
+      setReactions((json.data as MessageReaction[]) ?? []);
     })();
 
     return () => {
@@ -399,14 +403,18 @@ export function MessageThread({
   // is 0 the condition is false, so no further UPDATE is issued.
   useEffect(() => {
     if (!conversationId || !hasUnread) return;
-    const supabase = createClient();
-    supabase
-      .from("conversations")
-      .update({ unread_count: 0 })
-      .eq("id", conversationId)
-      .then(({ error }: { error: any }) => {
-        if (error) console.error("Failed to reset unread_count:", error);
-      });
+    fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "update",
+        table: "conversations",
+        values: { unread_count: 0 },
+        filters: [{ column: "id", operator: "eq", value: conversationId }],
+      }),
+    }).then((res) => res.json()).then((json) => {
+      if (json.error) console.error("Failed to reset unread_count:", json.error);
+    });
   }, [conversationId, hasUnread]);
 
   // Auto-scroll to bottom on new messages
@@ -478,11 +486,16 @@ export function MessageThread({
     async (status: ConversationStatus) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      await supabase
-        .from("conversations")
-        .update({ status })
-        .eq("id", conversation.id);
+      await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          table: "conversations",
+          values: { status },
+          filters: [{ column: "id", operator: "eq", value: conversation.id }],
+        }),
+      });
 
       onStatusChange(conversation.id, status);
     },
@@ -670,14 +683,20 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id);
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          table: "conversations",
+          values: { assigned_agent_id: agentId },
+          filters: [{ column: "id", operator: "eq", value: conversation.id }],
+        }),
+      });
+      const json = await res.json();
 
-      if (error) {
-        console.error("Failed to update assignment:", error);
+      if (json.error) {
+        console.error("Failed to update assignment:", json.error);
         toast.error("Failed to update assignment");
         return;
       }

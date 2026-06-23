@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -52,8 +51,6 @@ interface ContactWithTags extends Contact {
 }
 
 export default function ContactsPage() {
-  const supabase = createClient();
-
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -75,56 +72,77 @@ export default function ContactsPage() {
   const [tagsMap, setTagsMap] = useState<Record<string, Tag>>({});
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
-    if (data) {
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'select', table: 'tags' }),
+    });
+    const json = await res.json();
+    if (json.data) {
       const map: Record<string, Tag> = {};
-      data.forEach((t: Tag) => (map[t.id] = t));
+      json.data.forEach((t: Tag) => (map[t.id] = t));
       setTagsMap(map);
     }
-  }, [supabase]);
+  }, []);
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);
 
-    const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+    const offset = page * PAGE_SIZE;
+    const limit = PAGE_SIZE;
 
-    let query = supabase
-      .from('contacts')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(from, to);
+    const body: Record<string, unknown> = {
+      action: 'select',
+      table: 'contacts',
+      select: '*',
+      count: true,
+      order: { column: 'created_at', ascending: false },
+      limit,
+      offset,
+    };
 
     if (search.trim()) {
       const term = `%${search.trim()}%`;
-      query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
+      body.or = `name.ilike.${term},phone.ilike.${term},email.ilike.${term}`;
     }
 
-    const { data, count, error } = await query;
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
 
-    if (error) {
+    if (json.error) {
       toast.error('Failed to load contacts');
       setLoading(false);
       return;
     }
 
-    setTotalCount(count ?? 0);
+    setTotalCount(json.count ?? 0);
 
+    const data = json.data;
     if (!data || data.length === 0) {
       setContacts([]);
       setLoading(false);
       return;
     }
 
-    // Fetch tags for these contacts
     const contactIds = data.map((c: Contact) => c.id);
-    const { data: contactTags } = await supabase
-      .from('contact_tags')
-      .select('contact_id, tag_id')
-      .in('contact_id', contactIds);
+    const tagRes = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contact_tags',
+        filters: [{ column: 'contact_id', operator: 'in', value: contactIds }],
+      }),
+    });
+    const tagJson = await tagRes.json();
+    const contactTags = tagJson.data ?? [];
 
     const tagsByContact: Record<string, string[]> = {};
-    contactTags?.forEach((ct) => {
+    contactTags.forEach((ct: { contact_id: string; tag_id: string }) => {
       if (!tagsByContact[ct.contact_id]) tagsByContact[ct.contact_id] = [];
       tagsByContact[ct.contact_id].push(ct.tag_id);
     });
@@ -138,7 +156,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap]);
+  }, [page, search, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -161,12 +179,18 @@ export default function ContactsPage() {
   }
 
   async function openEditForm(contact: Contact) {
-    const { data } = await supabase
-      .from('contact_tags')
-      .select('*')
-      .eq('contact_id', contact.id);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contact_tags',
+        filters: [{ column: 'contact_id', operator: 'eq', value: contact.id }],
+      }),
+    });
+    const json = await res.json();
     setEditContact(contact);
-    setEditContactTags(data ?? []);
+    setEditContactTags(json.data ?? []);
     setFormOpen(true);
   }
 
@@ -184,12 +208,18 @@ export default function ContactsPage() {
     if (!deleteTarget) return;
     setDeleting(true);
 
-    const { error } = await supabase
-      .from('contacts')
-      .delete()
-      .eq('id', deleteTarget.id);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'delete',
+        table: 'contacts',
+        filters: [{ column: 'id', operator: 'eq', value: deleteTarget.id }],
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
+    if (json.error) {
       toast.error('Failed to delete contact');
     } else {
       toast.success('Contact deleted');

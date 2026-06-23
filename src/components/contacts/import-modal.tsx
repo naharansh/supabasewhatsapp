@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import {
@@ -79,7 +78,6 @@ function parseCSV(text: string): ParsedRow[] {
 }
 
 export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps) {
-  const supabase = createClient();
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,23 +139,35 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
           company: row.company || null,
         }));
 
-        const { data, error } = await supabase
-          .from('contacts')
-          .insert(rows)
-          .select('id');
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'insert',
+            table: 'contacts',
+            values: rows,
+            select: true,
+          }),
+        });
+        const json = await res.json();
 
-        if (error) {
+        if (json.error) {
           // Try individual inserts for this chunk
           for (const row of rows) {
-            const { error: singleErr } = await supabase.from('contacts').insert(row);
-            if (singleErr) {
+            const singleRes = await fetch('/api/data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'insert', table: 'contacts', values: row }),
+            });
+            const singleJson = await singleRes.json();
+            if (singleJson.error) {
               failed++;
             } else {
               imported++;
             }
           }
         } else {
-          imported += data?.length ?? chunk.length;
+          imported += json.data?.length ?? chunk.length;
         }
       }
 

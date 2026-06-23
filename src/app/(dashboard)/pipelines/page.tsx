@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
@@ -38,7 +37,6 @@ const SPEC_DEFAULT_STAGES = [
 ];
 
 export default function PipelinesPage() {
-  const supabase = createClient();
   const { user } = useAuth();
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -63,52 +61,77 @@ export default function PipelinesPage() {
   const seedAttempted = useRef(false);
 
   const loadPipelines = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("pipelines")
-      .select("*")
-      .order("created_at");
-    if (error) {
-      console.error("Failed to load pipelines:", error.message);
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "select",
+        table: "pipelines",
+        order: { column: "created_at" },
+      }),
+    });
+    const json = await res.json();
+    if (json.error) {
+      console.error("Failed to load pipelines:", json.error);
       return [];
     }
-    return data ?? [];
-  }, [supabase]);
+    return json.data ?? [];
+  }, []);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("pipeline_stages")
-        .select("*")
-        .eq("pipeline_id", pipelineId)
-        .order("position");
-      return data ?? [];
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "pipeline_stages",
+          filters: [{ column: "pipeline_id", operator: "eq", value: pipelineId }],
+          order: { column: "position" },
+        }),
+      });
+      const json = await res.json();
+      return json.data ?? [];
     },
-    [supabase],
+    [],
   );
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "deals",
+          select: "*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)",
+          filters: [{ column: "pipeline_id", operator: "eq", value: pipelineId }],
+          order: { column: "created_at", ascending: false },
+        }),
+      });
+      const json = await res.json();
+      return (json.data ?? []) as Deal[];
     },
-    [supabase],
+    [],
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {
     if (!user) return null;
 
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({ user_id: user.id, name: "Sales Pipeline" })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
-      console.error("Failed to seed pipeline:", error?.message);
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "insert",
+        table: "pipelines",
+        values: { user_id: user.id, name: "Sales Pipeline" },
+        select: true,
+      }),
+    });
+    const json = await res.json();
+    const pipeline = json.data?.[0];
+    if (json.error || !pipeline) {
+      console.error("Failed to seed pipeline:", json.error);
       return null;
     }
 
@@ -118,10 +141,18 @@ export default function PipelinesPage() {
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "insert",
+        table: "pipeline_stages",
+        values: stagesPayload,
+      }),
+    });
 
     return pipeline as Pipeline;
-  }, [supabase, user]);
+  }, [user]);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -203,16 +234,23 @@ export default function PipelinesPage() {
       setDeals((prev) =>
         prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d)),
       );
-      const { error } = await supabase
-        .from("deals")
-        .update({ stage_id: newStageId })
-        .eq("id", dealId);
-      if (error) {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          table: "deals",
+          values: { stage_id: newStageId },
+          filters: [{ column: "id", operator: "eq", value: dealId }],
+        }),
+      });
+      const json = await res.json();
+      if (json.error) {
         toast.error("Failed to move deal");
         refreshDeals();
       }
     },
-    [supabase, refreshDeals],
+    [refreshDeals],
   );
 
   const handleAddDeal = useCallback(
@@ -240,13 +278,19 @@ export default function PipelinesPage() {
       return;
     }
 
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({ user_id: user.id, name })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "insert",
+        table: "pipelines",
+        values: { user_id: user.id, name },
+        select: true,
+      }),
+    });
+    const json = await res.json();
+    const pipeline = json.data?.[0];
+    if (json.error || !pipeline) {
       toast.error("Failed to create pipeline");
       setCreating(false);
       return;
@@ -258,7 +302,15 @@ export default function PipelinesPage() {
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "insert",
+        table: "pipeline_stages",
+        values: stagesPayload,
+      }),
+    });
 
     setNewPipelineName("");
     setNewPipelineOpen(false);

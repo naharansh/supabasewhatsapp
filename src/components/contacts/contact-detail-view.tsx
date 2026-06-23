@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
@@ -47,7 +46,6 @@ export function ContactDetailView({
   contactId,
   onUpdated,
 }: ContactDetailViewProps) {
-  const supabase = createClient();
   const { user } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
@@ -86,84 +84,127 @@ export function ContactDetailView({
     if (!contactId) return;
     setLoading(true);
 
-    const { data } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('id', contactId)
-      .single();
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contacts',
+        single: true,
+        filters: [{ column: 'id', operator: 'eq', value: contactId }],
+      }),
+    });
+    const json = await res.json();
 
-    if (data) {
-      setContact(data);
-      setEditName(data.name ?? '');
-      setEditPhone(data.phone);
-      setEditEmail(data.email ?? '');
-      setEditCompany(data.company ?? '');
+    if (json.data) {
+      setContact(json.data);
+      setEditName(json.data.name ?? '');
+      setEditPhone(json.data.phone);
+      setEditEmail(json.data.email ?? '');
+      setEditCompany(json.data.company ?? '');
     }
     setLoading(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchTags = useCallback(async () => {
     if (!contactId) return;
 
-    const [tagsRes, contactTagsRes] = await Promise.all([
-      supabase.from('tags').select('*').order('name'),
-      supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
+    const [tagsRes, ctRes] = await Promise.all([
+      fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'select', table: 'tags', order: { column: 'name' } }),
+      }),
+      fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contact_tags',
+          filters: [{ column: 'contact_id', operator: 'eq', value: contactId }],
+        }),
+      }),
     ]);
 
-    if (tagsRes.data) setAllTags(tagsRes.data);
-    if (contactTagsRes.data) {
-      setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
+    const [tagsJson, ctJson] = await Promise.all([tagsRes.json(), ctRes.json()]);
+
+    if (tagsJson.data) setAllTags(tagsJson.data);
+    if (ctJson.data) {
+      setContactTagIds(ctJson.data.map((ct: { tag_id: string }) => ct.tag_id));
     }
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchNotes = useCallback(async () => {
     if (!contactId) return;
     setLoadingNotes(true);
 
-    const { data } = await supabase
-      .from('contact_notes')
-      .select('*')
-      .eq('contact_id', contactId)
-      .order('created_at', { ascending: false });
-
-    if (data) setNotes(data);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'contact_notes',
+        filters: [{ column: 'contact_id', operator: 'eq', value: contactId }],
+        order: { column: 'created_at', ascending: false },
+      }),
+    });
+    const json = await res.json();
+    if (json.data) setNotes(json.data);
     setLoadingNotes(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchCustomFields = useCallback(async () => {
     if (!contactId) return;
     setLoadingCustom(true);
 
     const [fieldsRes, valuesRes] = await Promise.all([
-      supabase.from('custom_fields').select('*').order('field_name'),
-      supabase
-        .from('contact_custom_values')
-        .select('*')
-        .eq('contact_id', contactId),
+      fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'select', table: 'custom_fields', order: { column: 'field_name' } }),
+      }),
+      fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contact_custom_values',
+          filters: [{ column: 'contact_id', operator: 'eq', value: contactId }],
+        }),
+      }),
     ]);
 
-    if (fieldsRes.data) setCustomFields(fieldsRes.data);
-    if (valuesRes.data) {
+    const [fieldsJson, valuesJson] = await Promise.all([fieldsRes.json(), valuesRes.json()]);
+
+    if (fieldsJson.data) setCustomFields(fieldsJson.data);
+    if (valuesJson.data) {
       const map: Record<string, string> = {};
-      valuesRes.data.forEach((v: ContactCustomValue) => {
+      valuesJson.data.forEach((v: ContactCustomValue) => {
         map[v.custom_field_id] = v.value ?? '';
       });
       setCustomValues(map);
     }
     setLoadingCustom(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchDeals = useCallback(async () => {
     if (!contactId) return;
     setLoadingDeals(true);
-    const { data } = await supabase
-      .from('deals')
-      .select('*, stage:pipeline_stages(*)')
-      .eq('contact_id', contactId)
-      .order('created_at', { ascending: false });
-    setDeals((data ?? []) as Deal[]);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select',
+        table: 'deals',
+        select: '*, stage:pipeline_stages(*)',
+        filters: [{ column: 'contact_id', operator: 'eq', value: contactId }],
+        order: { column: 'created_at', ascending: false },
+      }),
+    });
+    const json = await res.json();
+    setDeals((json.data ?? []) as Deal[]);
     setLoadingDeals(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   useEffect(() => {
     if (open && contactId) {
@@ -189,18 +230,25 @@ export function ContactDetailView({
     }
 
     setSavingDetails(true);
-    const { error } = await supabase
-      .from('contacts')
-      .update({
-        name: editName.trim() || null,
-        phone: editPhone.trim(),
-        email: editEmail.trim() || null,
-        company: editCompany.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', contactId);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'update',
+        table: 'contacts',
+        values: {
+          name: editName.trim() || null,
+          phone: editPhone.trim(),
+          email: editEmail.trim() || null,
+          company: editCompany.trim() || null,
+          updated_at: new Date().toISOString(),
+        },
+        filters: [{ column: 'id', operator: 'eq', value: contactId }],
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
+    if (json.error) {
       toast.error('Failed to update contact');
     } else {
       toast.success('Contact updated');
@@ -217,20 +265,35 @@ export function ContactDetailView({
     const isSelected = contactTagIds.includes(tagId);
 
     if (isSelected) {
-      const { error } = await supabase
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', contactId)
-        .eq('tag_id', tagId);
-      if (!error) {
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          table: 'contact_tags',
+          filters: [
+            { column: 'contact_id', operator: 'eq', value: contactId },
+            { column: 'tag_id', operator: 'eq', value: tagId },
+          ],
+        }),
+      });
+      const json = await res.json();
+      if (!json.error) {
         setContactTagIds((prev) => prev.filter((id) => id !== tagId));
         onUpdated();
       }
     } else {
-      const { error } = await supabase
-        .from('contact_tags')
-        .insert({ contact_id: contactId, tag_id: tagId });
-      if (!error) {
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'contact_tags',
+          values: { contact_id: contactId, tag_id: tagId },
+        }),
+      });
+      const json = await res.json();
+      if (!json.error) {
         setContactTagIds((prev) => [...prev, tagId]);
         onUpdated();
       }
@@ -248,13 +311,22 @@ export function ContactDetailView({
       return;
     }
 
-    const { error } = await supabase.from('contact_notes').insert({
-      contact_id: contactId,
-      user_id: user.id,
-      note_text: newNote.trim(),
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'insert',
+        table: 'contact_notes',
+        values: {
+          contact_id: contactId,
+          user_id: user.id,
+          note_text: newNote.trim(),
+        },
+      }),
     });
+    const json = await res.json();
 
-    if (error) {
+    if (json.error) {
       toast.error('Failed to add note');
     } else {
       setNewNote('');
@@ -265,12 +337,18 @@ export function ContactDetailView({
   }
 
   async function deleteNote(noteId: string) {
-    const { error } = await supabase
-      .from('contact_notes')
-      .delete()
-      .eq('id', noteId);
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'delete',
+        table: 'contact_notes',
+        filters: [{ column: 'id', operator: 'eq', value: noteId }],
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
+    if (json.error) {
       toast.error('Failed to delete note');
     } else {
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
@@ -283,11 +361,15 @@ export function ContactDetailView({
     setSavingCustom(true);
 
     try {
-      // Delete existing values and re-insert
-      await supabase
-        .from('contact_custom_values')
-        .delete()
-        .eq('contact_id', contactId);
+      await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          table: 'contact_custom_values',
+          filters: [{ column: 'contact_id', operator: 'eq', value: contactId }],
+        }),
+      });
 
       const rows = Object.entries(customValues)
         .filter(([, val]) => val.trim())
@@ -298,10 +380,17 @@ export function ContactDetailView({
         }));
 
       if (rows.length > 0) {
-        const { error } = await supabase
-          .from('contact_custom_values')
-          .insert(rows);
-        if (error) throw error;
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'insert',
+            table: 'contact_custom_values',
+            values: rows,
+          }),
+        });
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
       }
 
       toast.success('Custom fields saved');

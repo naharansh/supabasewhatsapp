@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 
 import { useAuth } from '@/hooks/use-auth';
-import { createClient } from '@/lib/supabase/client';
+import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -142,16 +142,25 @@ export function ProfileForm() {
         body.email = trimmedEmail;
       }
 
-      const supabase = createClient();
       if (body.email && body.email !== profile.email) {
+        const supabase = createSupabaseClient();
         const { error: emailErr } = await supabase.auth.updateUser({ email: body.email as string });
         if (emailErr) throw new Error(emailErr.message);
       }
-      const { error: updateErr } = await supabase
-        .from('profiles')
-        .update({ full_name: body.full_name as string, avatar_url: body.avatar_url as string | null })
-        .eq('user_id', user!.id);
-      if (updateErr) throw new Error(updateErr.message);
+      const profileRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          table: 'profiles',
+          values: { full_name: body.full_name as string, avatar_url: body.avatar_url as string | null },
+          filters: [{ column: 'user_id', operator: 'eq', value: user!.id }],
+        }),
+      });
+      if (!profileRes.ok) {
+        const err = await profileRes.json().catch(() => null);
+        throw new Error(err?.error ?? 'Failed to update profile');
+      }
 
       if (trimmedEmail.toLowerCase() !== profile.email.toLowerCase()) {
         emailSent = true;

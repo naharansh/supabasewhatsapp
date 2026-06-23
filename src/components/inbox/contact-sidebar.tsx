@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
@@ -36,30 +35,48 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
 
-    const supabase = createClient();
-
-    // Fetch deals, notes, and tags in parallel
     const [dealsRes, notesRes, tagsRes] = await Promise.all([
-      supabase
-        .from("deals")
-        .select("*, stage:pipeline_stages(*)")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_notes")
-        .select("*")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_tags")
-        .select("id, tag_id, tags(*)")
-        .eq("contact_id", contact.id),
+      fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "deals",
+          select: "*, stage:pipeline_stages(*)",
+          filters: [{ column: "contact_id", operator: "eq", value: contact.id }],
+          order: { column: "created_at", ascending: false },
+        }),
+      }),
+      fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "contact_notes",
+          filters: [{ column: "contact_id", operator: "eq", value: contact.id }],
+          order: { column: "created_at", ascending: false },
+        }),
+      }),
+      fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "contact_tags",
+          select: "id, tag_id, tags(*)",
+          filters: [{ column: "contact_id", operator: "eq", value: contact.id }],
+        }),
+      }),
     ]);
 
-    if (dealsRes.data) setDeals(dealsRes.data);
-    if (notesRes.data) setNotes(notesRes.data);
-    if (tagsRes.data) {
-      const mapped = tagsRes.data
+    const [dealsJson, notesJson, tagsJson] = await Promise.all([
+      dealsRes.json(), notesRes.json(), tagsRes.json(),
+    ]);
+
+    if (dealsJson.data) setDeals(dealsJson.data);
+    if (notesJson.data) setNotes(notesJson.data);
+    if (tagsJson.data) {
+      const mapped = tagsJson.data
         .filter((ct: Record<string, unknown>) => ct.tags)
         .map((ct: Record<string, unknown>) => ({
           ...(ct.tags as Tag),
@@ -90,20 +107,26 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     if (!contact || !newNote.trim()) return;
     setAddingNote(true);
 
-    const supabase = createClient();
     const userId = user?.id;
 
-    const { data, error } = await supabase
-      .from("contact_notes")
-      .insert({
-        contact_id: contact.id,
-        user_id: userId,
-        note_text: newNote.trim(),
-      })
-      .select()
-      .single();
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "insert",
+        table: "contact_notes",
+        values: {
+          contact_id: contact.id,
+          user_id: userId,
+          note_text: newNote.trim(),
+        },
+        select: true,
+      }),
+    });
+    const json = await res.json();
+    const data = json.data?.[0];
 
-    if (!error && data) {
+    if (!json.error && data) {
       setNotes((prev) => [data, ...prev]);
       setNewNote("");
     }

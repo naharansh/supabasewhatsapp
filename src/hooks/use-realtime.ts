@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { Message, Conversation } from "@/types";
-import { createClient } from "@/lib/supabase/client";
-
 interface RealtimeEvent<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";
   new: T;
@@ -17,15 +15,18 @@ interface UseRealtimeOptions {
   enabled?: boolean;
 }
 
-const supabase = createClient();
-
 async function fetchAll<T extends { id: string }>(
   table: string
 ): Promise<T[]> {
   try {
-    const { data, error } = await supabase.from(table).select("*");
-    if (error) return [];
-    return (data as T[]) ?? [];
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "select", table }),
+    });
+    const json = await res.json();
+    if (json.error) return [];
+    return (json.data as T[]) ?? [];
   } catch {
     return [];
   }

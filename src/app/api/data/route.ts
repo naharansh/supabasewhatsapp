@@ -4,13 +4,16 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const ALLOWED_TABLES = [
   'tags', 'custom_fields', 'contacts', 'contact_tags',
-  'contact_custom_values', 'broadcasts', 'broadcast_recipients',
-  'message_templates', 'whatsapp_config',
+  'contact_custom_values', 'contact_notes', 'broadcasts',
+  'broadcast_recipients', 'message_templates', 'whatsapp_config',
+  'deals', 'pipeline_stages', 'pipelines', 'profiles', 'conversations',
+  'messages', 'message_reactions', 'automations',
 ]
 
 const TABLES_WITH_USER_ID = [
-  'tags', 'custom_fields', 'contacts', 'broadcasts',
-  'message_templates', 'whatsapp_config',
+  'tags', 'custom_fields', 'contacts', 'contact_notes',
+  'broadcasts', 'message_templates', 'whatsapp_config', 'deals',
+  'pipelines', 'conversations', 'messages', 'automations',
 ]
 
 export async function POST(request: Request) {
@@ -39,8 +42,8 @@ export async function POST(request: Request) {
 
     switch (action) {
       case 'select': {
-        const { select: columns = '*', filters = [], order, limit, single, count } = body
-        query = supabase.from(table).select(columns, count ? { count: 'exact', head: true } : undefined)
+        const { select: columns = '*', filters = [], order, limit, offset, single, count, or: orFilter } = body
+        query = supabase.from(table).select(columns, count ? { count: 'exact' } : undefined)
 
         if (TABLES_WITH_USER_ID.includes(table)) {
           query = query.eq('user_id', userId)
@@ -64,12 +67,17 @@ export async function POST(request: Request) {
           }
         }
 
+        if (orFilter) {
+          query = query.or(orFilter)
+        }
+
         if (order) {
           const { column, ascending = true } = order
           query = query.order(column, { ascending })
         }
 
         if (limit) query = query.limit(limit)
+        if (offset) query = query.offset(offset)
 
         if (single) {
           const { data, error } = await query.maybeSingle()
@@ -105,6 +113,15 @@ export async function POST(request: Request) {
             query = query.eq(f.column, f.value)
           }
         }
+        const { data, error } = await query
+        if (error) throw error
+        return NextResponse.json({ data })
+      }
+
+      case 'upsert': {
+        const { values, onConflict, select = false } = body
+        query = supabase.from(table).upsert(values, onConflict ? { onConflict, ignoreDuplicates: false } : undefined)
+        if (select) query = query.select()
         const { data, error } = await query
         if (error) throw error
         return NextResponse.json({ data })
