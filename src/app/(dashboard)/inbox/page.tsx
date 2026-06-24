@@ -238,6 +238,7 @@ export default function InboxPage() {
                 ? {
                     ...c,
                     ...conv,
+                    contact: conv.contact ?? c.contact,
                     unread_count: isActive ? 0 : conv.unread_count,
                   }
                 : c,
@@ -254,7 +255,9 @@ export default function InboxPage() {
         // Update active conversation if it changed
         if (activeConversation && conv.id === activeConversation.id) {
           setActiveConversation((prev) =>
-            prev ? { ...prev, ...conv } : prev
+            prev
+              ? { ...prev, ...conv, contact: conv.contact ?? prev.contact }
+              : prev
           );
         }
       }

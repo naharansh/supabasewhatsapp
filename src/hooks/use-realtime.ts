@@ -16,13 +16,20 @@ interface UseRealtimeOptions {
 }
 
 async function fetchAll<T extends { id: string }>(
-  table: string
+  table: string,
+  select?: string,
+  filters?: { column: string; operator: string; value: unknown }[]
 ): Promise<T[]> {
   try {
     const res = await fetch("/api/data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "select", table }),
+      body: JSON.stringify({
+        action: "select",
+        table,
+        ...(select ? { select } : {}),
+        ...(filters ? { filters } : {}),
+      }),
     });
     const json = await res.json();
     if (json.error) return [];
@@ -55,9 +62,15 @@ export function useRealtime({
     setIsConnected(true);
 
     intervalRef.current = setInterval(async () => {
+      // Only poll recent messages (last 72 hours) to keep payloads small
+      const recentCutoff = new Date(
+        Date.now() - 72 * 60 * 60 * 1000
+      ).toISOString();
       const [messages, conversations] = await Promise.all([
-        fetchAll<Message>("messages"),
-        fetchAll<Conversation>("conversations"),
+        fetchAll<Message>("messages", undefined, [
+          { column: "created_at", operator: "gte", value: recentCutoff },
+        ]),
+        fetchAll<Conversation>("conversations", "*, contact:contacts(*)"),
       ]);
 
       const prevMessages = prevMessagesRef.current;

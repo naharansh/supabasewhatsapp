@@ -13,7 +13,7 @@ const ALLOWED_TABLES = [
 const TABLES_WITH_USER_ID = [
   'tags', 'custom_fields', 'contacts', 'contact_notes',
   'broadcasts', 'message_templates', 'whatsapp_config', 'deals',
-  'pipelines', 'conversations', 'messages', 'automations',
+  'pipelines', 'conversations', 'automations',
 ]
 
 export async function POST(request: Request) {
@@ -63,6 +63,12 @@ export async function POST(request: Request) {
               break
             case 'ilike':
               query = query.ilike(column, value)
+              break
+            case 'gte':
+              query = query.gte(column, value)
+              break
+            case 'lte':
+              query = query.lte(column, value)
               break
           }
         }
