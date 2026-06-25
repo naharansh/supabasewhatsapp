@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { REALTIME_LISTEN_TYPES } from "@supabase/supabase-js";
+
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type {
@@ -273,76 +272,37 @@ export function MessageThread({
     };
   }, [conversationId, resyncToken]);
 
-  // Reactions realtime subscription per conversation. Subscribing here
-  // (not at the page level) keeps the channel scoped to the visible
-  // conversation and avoids cross-conversation chatter on a busy inbox.
+  // Reactions polling — fetches via /api/data every 5s so we
+  // avoid the broken createBrowserClient() on marbiz.in. The initial
+  // fetch is handled by the resyncToken-driven effect above; this just
+  // keeps the list fresh for concurrent agent reactions.
   useEffect(() => {
     if (!conversationId) return;
-    const supabase = createClient();
+    let cancelled = false;
 
-    const channel = supabase
-      .channel(`reactions:${conversationId}`)
-      .on(
-        REALTIME_LISTEN_TYPES.POSTGRES_CHANGES as any,
-        {
-          event: "INSERT",
-          schema: "public",
+    const poll = async () => {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
           table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload: { new: MessageReaction; old: MessageReaction }) => {
-          const row = payload.new as MessageReaction;
-          setReactions((prev) => {
-            if (prev.some((r) => r.id === row.id)) return prev;
-            // Swap any matching optimistic temp row for the real one so
-            // the pill doesn't double up after a successful POST.
-            const tempIdx = prev.findIndex(
-              (r) =>
-                r.id.startsWith("temp-") &&
-                r.message_id === row.message_id &&
-                r.actor_type === row.actor_type &&
-                r.actor_id === row.actor_id,
-            );
-            if (tempIdx >= 0) {
-              const copy = prev.slice();
-              copy[tempIdx] = row;
-              return copy;
-            }
-            return [...prev, row];
-          });
-        },
-      )
-      .on(
-        REALTIME_LISTEN_TYPES.POSTGRES_CHANGES as any,
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload: { new: MessageReaction; old: MessageReaction }) => {
-          const row = payload.new as MessageReaction;
-          setReactions((prev) => prev.map((r) => (r.id === row.id ? row : r)));
-        },
-      )
-      .on(
-        REALTIME_LISTEN_TYPES.POSTGRES_CHANGES as any,
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload: { new: MessageReaction; old: MessageReaction }) => {
-          const old = payload.old as Partial<MessageReaction>;
-          if (!old?.id) return;
-          setReactions((prev) => prev.filter((r) => r.id !== old.id));
-        },
-      )
-      .subscribe();
+          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
+        }),
+      });
+      if (cancelled) return;
+      const json = await res.json();
+      if (json.error) {
+        console.error("Failed to poll reactions:", json.error);
+        return;
+      }
+      setReactions((json.data as MessageReaction[]) ?? []);
+    };
 
+    const interval = setInterval(poll, 5000);
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [conversationId]);
 

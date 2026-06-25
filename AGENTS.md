@@ -28,19 +28,22 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## Anchored Summary
 
 ### Goal
-Fix WhatsApp connection, template display, and broadcast data loading on marbiz.in production — all caused by `@supabase/ssr` browser client (`createBrowserClient`) failing to read Supabase auth cookies on this deployment.
+Fix WhatsApp connection, template display, broadcast data loading, and message persistence on marbiz.in production.
 
-### Root Cause
-`@supabase/ssr` v0.10.3 `createBrowserClient` cannot read auth cookies on marbiz.in production — `document.cookie` may lack access (HttpOnly flag?) or session propagation fails between middleware and client. Every direct `supabase.from('table').select('*')` returns empty/null. Writes also likely fail because RLS can't resolve `auth.uid()`.
+Two root causes:
+1. `@supabase/ssr` v0.10.3 `createBrowserClient` cannot read auth cookies on marbiz.in (all Supabase browser-client calls return empty).
+2. Supabase project `anvolqqgcqvkzsvmlhnb.supabase.co` only has migrations 001–008 applied. Migrations 009–017 missing — most critically, `messages` table lacks `reply_to_message_id`, `interactive_reply_id` columns, and the widened `content_type` CHECK that includes `'interactive'`. The webhook's `INSERT` into `messages` silently fails when it tries to write these missing columns.
 
-### Solution
-All data access now goes through API routes using `createAdminClient()` (service_role key in `src/lib/supabase/admin.ts`), bypassing the broken browser client. The server-side `auth()` (NextAuth) handles session verification, and the admin client handles DB queries.
+### Solutions
+1. All browser data access → API routes with `createAdminClient()` (service_role key). Server-side `auth()` (NextAuth) handles session; admin client handles DB.
+2. Apply combined migrations SQL (`scripts/apply-migrations-009-017.sql`) via Supabase Dashboard SQL Editor to add missing columns, tables, functions.
 
 ### Files Changed This Session
 
 **New files:**
 - `src/app/api/data/route.ts` — Generic CRUD proxy for all tables (POST with `action`, `table`, `filters`, `order`, `limit`, etc.). Whitelists allowed tables, auto-filters `user_id` for tables that have it. Supports `select` (with count, single, in/eq/neq/ilike filters), `insert`, `update`, `delete`.
 - `src/app/api/broadcasts/` (directory) — Created for broadcast-specific API (not used; `/api/data` handles it instead).
+- `scripts/apply-migrations-009-017.sql` — Combined idempotent SQL to apply missing migrations via Supabase Dashboard SQL Editor.
 
 **Components fixed (replaced `createClient()` → `fetch('/api/data')`):**
 - `src/components/broadcasts/step1-choose-template.tsx` — Uses `/api/whatsapp/templates`
@@ -51,6 +54,7 @@ All data access now goes through API routes using `createAdminClient()` (service
 - `src/app/(dashboard)/broadcasts/[id]/page.tsx` — Broadcast detail, recipients, delete
 - `src/app/(dashboard)/broadcasts/new/page.tsx` — Save draft
 - `src/hooks/use-broadcast-sending.ts` — Full send pipeline (audience resolution, CSV upsert, custom field filter, recipient insert/update, finalize)
+- `src/components/inbox/message-thread.tsx` — Removed last `createClient()` call; reactions realtime subscription replaced with 5s polling via `/api/data`. Removed `REALTIME_LISTEN_TYPES` import.
 
 **Files fixed in previous session:**
 - `src/app/api/whatsapp/config/route.ts` — Changed to `createAdminClient()`
@@ -60,17 +64,35 @@ All data access now goes through API routes using `createAdminClient()` (service
 - `src/components/settings/whatsapp-config.tsx` — Uses API instead of direct Supabase
 - `src/components/settings/template-manager.tsx` — Uses API instead of direct Supabase
 - `src/app/layout.tsx` + `src/app/globals.css` — Removed Google Fonts Inter, system font stack
+- `scripts/seed-inbox.mjs` — Seed script that creates 6 contacts, 6 conversations, 36 messages, and reactions.
 
 ### Still Broken (same root cause — `createClient()` reads return empty)
 These files still use `createClient()` directly and will return empty data on production:
 - `src/components/contacts/contact-form.tsx` — Tags, contacts
 - `src/components/contacts/contact-detail-view.tsx` — Tags, contacts, notes
-- `src/components/inbox/*.tsx` — Conversations, messages
 - `src/components/settings/tag-manager.tsx` — Tags
-- `src/hooks/use-realtime.ts` — Conversations, messages
 - Various other components with `createClient()` imports
 
 ### Key Pattern for Future Fixes
+
+```ts
+// BROKEN (returns empty on marbiz.in):
+const supabase = createClient();
+const { data } = await supabase.from('tags').select('*');
+
+// FIXED (uses admin client server-side):
+const res = await fetch('/api/data', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    action: 'select',
+    table: 'tags',
+    order: { column: 'name' },
+  }),
+});
+const json = await res.json();
+const data = json.data;
+```
 ```ts
 // BROKEN (returns empty on marbiz.in):
 const supabase = createClient();

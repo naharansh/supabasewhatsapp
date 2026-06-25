@@ -16,7 +16,22 @@ const TABLES_WITH_USER_ID = [
   'pipelines', 'conversations', 'automations',
 ]
 
+function isTableNotFound(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    String((error as { code: unknown }).code) === 'PGRST205'
+  )
+}
+
+function emptyResponse(action: string) {
+  return NextResponse.json({ data: action === 'select' ? [] : null, count: 0 })
+}
+
 export async function POST(request: Request) {
+  let action = ''
+  let table = ''
   try {
     const session = await auth()
     if (!session?.user?.id) {
@@ -25,7 +40,7 @@ export async function POST(request: Request) {
     const userId = session.user.id
 
     const body = await request.json()
-    const { action, table } = body
+    ;({ action, table } = body as { action: string; table: string })
 
     if (!action || !table) {
       return NextResponse.json({ error: 'action and table are required' }, { status: 400 })
@@ -177,14 +192,21 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Unknown action: '${action}'` }, { status: 400 })
     }
   } catch (error) {
+    const code =
+      error && typeof error === 'object' && 'code' in error
+        ? String((error as { code: unknown }).code ?? '')
+        : ''
+
+    // PGRST205 = table not found in schema cache. Not a server error —
+    // return empty data so UIs degrade gracefully instead of toasting errors.
+    if (code === 'PGRST205') {
+      return emptyResponse(action)
+    }
+
     const message = error instanceof Error ? error.message : 'Internal server error'
     const details =
       error && typeof error === 'object' && 'details' in error
         ? String((error as { details: unknown }).details ?? '')
-        : ''
-    const code =
-      error && typeof error === 'object' && 'code' in error
-        ? String((error as { code: unknown }).code ?? '')
         : ''
     console.error('Data API error:', message, code, details, error)
     return NextResponse.json({ error: code ? `${code}: ${message}` : message }, { status: 500 })
