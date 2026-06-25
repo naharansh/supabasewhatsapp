@@ -218,21 +218,25 @@ export function MessageThread({
 
     (async () => {
       setLoading(true);
+      try {
+        const res = await fetch(
+          `/api/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+          { cache: "no-store" },
+        );
+        const json = await res.json();
 
-      const res = await fetch(
-        `/api/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
-        { cache: "no-store" },
-      );
-      const json = await res.json();
+        if (cancelled) return;
 
-      if (cancelled) return;
-
-      if (!res.ok || json.error) {
-        console.error("Failed to fetch messages:", json.error ?? res.statusText);
-      } else {
-        onMessagesLoadedRef.current(json.data ?? []);
+        if (!res.ok || json.error) {
+          console.error("Failed to fetch messages:", json.error ?? res.statusText);
+        } else {
+          onMessagesLoadedRef.current(json.data ?? []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to fetch messages:", err);
+        }
       }
-
       if (!cancelled) setLoading(false);
     })();
 
@@ -249,22 +253,28 @@ export function MessageThread({
     let cancelled = false;
 
     (async () => {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "select",
-          table: "message_reactions",
-          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
-        }),
-      });
-      const json = await res.json();
-      if (cancelled) return;
-      if (json.error) {
-        console.error("Failed to fetch reactions:", json.error);
-        return;
+      try {
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "message_reactions",
+            filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
+          }),
+        });
+        const json = await res.json();
+        if (cancelled) return;
+        if (json.error) {
+          console.error("Failed to fetch reactions:", json.error);
+          return;
+        }
+        setReactions((json.data as MessageReaction[]) ?? []);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to fetch reactions:", err);
+        }
       }
-      setReactions((json.data as MessageReaction[]) ?? []);
     })();
 
     return () => {
@@ -281,22 +291,28 @@ export function MessageThread({
     let cancelled = false;
 
     const poll = async () => {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "select",
-          table: "message_reactions",
-          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
-        }),
-      });
-      if (cancelled) return;
-      const json = await res.json();
-      if (json.error) {
-        console.error("Failed to poll reactions:", json.error);
-        return;
+      try {
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "message_reactions",
+            filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
+          }),
+        });
+        if (cancelled) return;
+        const json = await res.json();
+        if (json.error) {
+          console.error("Failed to poll reactions:", json.error);
+          return;
+        }
+        setReactions((json.data as MessageReaction[]) ?? []);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to poll reactions:", err);
+        }
       }
-      setReactions((json.data as MessageReaction[]) ?? []);
     };
 
     const interval = setInterval(poll, 5000);
