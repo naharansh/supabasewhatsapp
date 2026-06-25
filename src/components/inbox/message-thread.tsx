@@ -254,22 +254,16 @@ export function MessageThread({
     (async () => {
       setLoading(true);
 
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "select",
-          table: "messages",
-          filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
-          order: { column: "created_at", ascending: true },
-        }),
-      });
+      const res = await fetch(
+        `/api/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+        { cache: "no-store" },
+      );
       const json = await res.json();
 
       if (cancelled) return;
 
-      if (json.error) {
-        console.error("Failed to fetch messages:", json.error);
+      if (!res.ok || json.error) {
+        console.error("Failed to fetch messages:", json.error ?? res.statusText);
       } else {
         onMessagesLoadedRef.current(json.data ?? []);
       }

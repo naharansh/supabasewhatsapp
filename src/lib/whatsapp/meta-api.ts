@@ -35,8 +35,10 @@ interface MetaErrorResponse {
 
 async function throwMetaError(response: Response, fallback: string): Promise<never> {
   let message = fallback
+  let code: number | undefined
   try {
     const data = (await response.json()) as MetaErrorResponse
+    code = data.error?.code
     if (data.error?.message) {
       message = data.error.message
       if (data.error.error_data?.details) {
@@ -45,6 +47,9 @@ async function throwMetaError(response: Response, fallback: string): Promise<nev
     }
   } catch {
     // response body wasn't JSON — keep the fallback
+  }
+  if (code === 132001) {
+    message += '. Sync your WhatsApp templates in Settings to ensure the correct language is available.'
   }
   throw new Error(message)
 }

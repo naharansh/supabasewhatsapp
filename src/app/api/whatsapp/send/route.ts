@@ -64,13 +64,15 @@ export async function POST(request: Request) {
       )
     }
 
+    let tplLanguage: string | null = null
     if (message_type === 'template' && template_name) {
       const { data: tpl } = await supabase
         .from('message_templates')
-        .select('header_type')
+        .select('header_type, language')
         .eq('user_id', userId)
         .eq('name', template_name)
         .maybeSingle()
+      if (tpl) tplLanguage = tpl.language
       if (tpl && ['image', 'video', 'document'].includes(tpl.header_type || '')) {
         const hasHeaderParams = Array.isArray(header_params) && header_params.length > 0
         if (!hasHeaderParams) {
@@ -190,6 +192,7 @@ export async function POST(request: Request) {
           accessToken,
           to: phone,
           templateName: template_name,
+          language: tplLanguage || 'en_US',
           params: template_params || [],
           headerParams: header_params,
           contextMessageId,

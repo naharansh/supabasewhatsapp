@@ -140,6 +140,23 @@ export async function POST(request: Request) {
 
       case 'delete': {
         const { filters = [] } = body
+
+        // Broadcasts have a cascade + aggregate trigger that can fail
+        // when the trigger tries to UPDATE counts on a row that is being
+        // deleted. Delete recipients first so the trigger fires while
+        // the broadcast row still exists.
+        if (table === 'broadcasts') {
+          const bcFilter = filters.find((f: { column: string }) => f.column === 'id')
+          const bcId = bcFilter?.value
+          if (bcId && TABLES_WITH_USER_ID.includes(table)) {
+            const { error: recErr } = await supabase
+              .from('broadcast_recipients')
+              .delete()
+              .eq('broadcast_id', bcId)
+            if (recErr) throw recErr
+          }
+        }
+
         query = supabase.from(table).delete()
 
         if (TABLES_WITH_USER_ID.includes(table)) {
@@ -161,7 +178,15 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error'
-    console.error('Data API error:', error)
-    return NextResponse.json({ error: message }, { status: 500 })
+    const details =
+      error && typeof error === 'object' && 'details' in error
+        ? String((error as { details: unknown }).details ?? '')
+        : ''
+    const code =
+      error && typeof error === 'object' && 'code' in error
+        ? String((error as { code: unknown }).code ?? '')
+        : ''
+    console.error('Data API error:', message, code, details, error)
+    return NextResponse.json({ error: code ? `${code}: ${message}` : message }, { status: 500 })
   }
 }
