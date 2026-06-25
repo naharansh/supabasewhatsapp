@@ -81,14 +81,41 @@ export async function POST(request: Request) {
 
     const supabase = createAdminClient();
 
-    const { error: uploadError } = await supabase.storage
+    let { error: uploadError } = await supabase.storage
       .from("images")
       .upload(storagePath, buffer, {
         contentType: file.type,
         upsert: false,
       });
 
-    if (uploadError) {
+    if (uploadError?.message?.toLowerCase().includes("bucket not found")) {
+      const { error: createError } = await supabase.storage.createBucket("images", {
+        public: true,
+        fileSizeLimit: 10 * 1024 * 1024,
+        allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"],
+      });
+
+      if (createError) {
+        return NextResponse.json(
+          { error: `Storage bucket creation failed: ${createError.message}` },
+          { status: 500 },
+        );
+      }
+
+      const { error: retryError } = await supabase.storage
+        .from("images")
+        .upload(storagePath, buffer, {
+          contentType: file.type,
+          upsert: false,
+        });
+
+      if (retryError) {
+        return NextResponse.json(
+          { error: `Storage upload failed after creating bucket: ${retryError.message}` },
+          { status: 500 },
+        );
+      }
+    } else if (uploadError) {
       return NextResponse.json(
         { error: `Storage upload failed: ${uploadError.message}` },
         { status: 500 },
