@@ -726,8 +726,15 @@ export function MessageThread({
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
+  const currentUserLabel = user?.name?.trim() || user?.email || "Me";
+  const getProfileDisplayName = (profile: Profile) =>
+    profile.user_id === user?.id
+      ? currentUserLabel
+      : profile.full_name || profile.email;
   const assignLabel = assignedAgentId
-    ? (currentAssignee?.full_name ?? "Assigned")
+    ? currentAssignee
+      ? getProfileDisplayName(currentAssignee)
+      : "Assigned"
     : "Assign";
 
   return (
@@ -850,7 +857,7 @@ export function MessageThread({
                       )}
                     >
                       <span className="flex-1">
-                        {p.full_name}
+                        {getProfileDisplayName(p)}
                         {p.user_id === user?.id ? " (me)" : ""}
                       </span>
                       {isSelected && <Check className="ml-2 h-3 w-3" />}
