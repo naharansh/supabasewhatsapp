@@ -12,13 +12,11 @@ import type {
   Contact,
   ConversationStatus,
   MessageTemplate,
-  Profile,
 } from "@/types";
 import {
   MessageSquare,
   ChevronDown,
-  UserPlus,
-  Check,
+  User as UserIcon,
   Clock,
   ArrowLeft,
   RefreshCw,
@@ -29,7 +27,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -61,10 +58,6 @@ interface MessageThreadProps {
   onNewMessage: (message: Message) => void;
   onUpdateMessage: (id: string, updates: Partial<Message>) => void;
   onStatusChange: (conversationId: string, status: ConversationStatus) => void;
-  onAssignChange: (
-    conversationId: string,
-    assignedAgentId: string | null,
-  ) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
    * hidden. This callback lets the page deselect the active conversation
@@ -140,7 +133,6 @@ export function MessageThread({
   onNewMessage,
   onUpdateMessage,
   onStatusChange,
-  onAssignChange,
   onBack,
   resyncToken = 0,
   onRefresh,
@@ -149,7 +141,6 @@ export function MessageThread({
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
   // refetch is fire-and-forget through `onRefresh` (which bumps the
@@ -174,31 +165,6 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "select",
-          table: "profiles",
-          order: { column: "full_name" },
-        }),
-      });
-      const json = await res.json();
-      if (cancelled) return;
-      if (json.error) {
-        console.error("Failed to fetch profiles:", json.error);
-        return;
-      }
-      setProfiles((json.data as Profile[]) ?? []);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
@@ -673,33 +639,6 @@ export function MessageThread({
     [conversation, user?.id],
   );
 
-  const handleAssignChange = useCallback(
-    async (agentId: string | null) => {
-      if (!conversation) return;
-
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update",
-          table: "conversations",
-          values: { assigned_agent_id: agentId },
-          filters: [{ column: "id", operator: "eq", value: conversation.id }],
-        }),
-      });
-      const json = await res.json();
-
-      if (json.error) {
-        console.error("Failed to update assignment:", json.error);
-        toast.error("Failed to update assignment");
-        return;
-      }
-
-      onAssignChange(conversation.id, agentId);
-    },
-    [conversation, onAssignChange],
-  );
-
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -724,18 +663,7 @@ export function MessageThread({
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
   );
-  const assignedAgentId = conversation.assigned_agent_id ?? null;
-  const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const currentUserLabel = user?.name?.trim() || user?.email || "Me";
-  const getProfileDisplayName = (profile: Profile) =>
-    profile.user_id === user?.id
-      ? currentUserLabel
-      : profile.full_name || profile.email;
-  const assignLabel = assignedAgentId
-    ? currentAssignee
-      ? getProfileDisplayName(currentAssignee)
-      : "Assigned"
-    : "Assign";
 
   return (
     <div className={cn("flex flex-1 flex-col", DOODLE_BG_CLASSES)}>
@@ -824,60 +752,10 @@ export function MessageThread({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Assign dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className={cn(
-                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-slate-800",
-                assignedAgentId ? "text-primary" : "text-slate-400"
-              )}
-            >
-              <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
-              <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="border-slate-700 bg-slate-800"
-            >
-              {profiles.length === 0 ? (
-                <DropdownMenuItem disabled className="text-sm text-slate-500">
-                  No teammates available
-                </DropdownMenuItem>
-              ) : (
-                profiles.map((p) => {
-                  const isSelected = p.user_id === assignedAgentId;
-                  return (
-                    <DropdownMenuItem
-                      key={p.id}
-                      onClick={() => handleAssignChange(p.user_id)}
-                      className={cn(
-                        "text-sm",
-                        isSelected ? "text-primary" : "text-slate-300"
-                      )}
-                    >
-                      <span className="flex-1">
-                        {getProfileDisplayName(p)}
-                        {p.user_id === user?.id ? " (me)" : ""}
-                      </span>
-                      {isSelected && <Check className="ml-2 h-3 w-3" />}
-                    </DropdownMenuItem>
-                  );
-                })
-              )}
-              {assignedAgentId && (
-                <>
-                  <DropdownMenuSeparator className="bg-slate-700" />
-                  <DropdownMenuItem
-                    onClick={() => handleAssignChange(null)}
-                    className="text-sm text-slate-400"
-                  >
-                    Unassign
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="inline-flex h-7 max-w-36 items-center justify-center gap-1.5 rounded-md px-2 text-xs text-slate-300 sm:max-w-44">
+            <UserIcon className="h-3 w-3 shrink-0 text-primary" />
+            <span className="truncate">{currentUserLabel}</span>
+          </div>
         </div>
       </div>
 
