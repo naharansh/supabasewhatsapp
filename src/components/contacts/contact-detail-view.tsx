@@ -676,17 +676,115 @@ export function ContactDetailView({
                         <Label className="text-slate-400 text-xs capitalize">
                           {field.field_name}
                         </Label>
-                        <Input
-                          value={customValues[field.id] ?? ''}
-                          onChange={(e) =>
-                            setCustomValues((prev) => ({
-                              ...prev,
-                              [field.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={`Enter ${field.field_name}...`}
-                          className="bg-slate-800 border-slate-700 text-white h-8 text-sm placeholder:text-slate-500"
-                        />
+                        {field.field_type === 'textarea' ? (
+                          <Textarea
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Enter ${field.field_name}...`}
+                            rows={3}
+                            className="h-auto min-h-0 resize-y bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                          />
+                        ) : field.field_type === 'checkbox' ? (
+                          <input
+                            type="checkbox"
+                            checked={customValues[field.id] === 'true'}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.checked ? 'true' : 'false',
+                              }))
+                            }
+                            className="size-4 rounded border-slate-700 bg-slate-800 text-primary focus:ring-primary"
+                          />
+                        ) : field.field_type === 'radio' ? (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {(
+                              (field.field_options as { options?: string[] })?.options ?? []
+                            ).map((opt) => (
+                              <label
+                                key={opt}
+                                className="inline-flex items-center gap-2 text-sm text-white cursor-pointer"
+                              >
+                                <input
+                                  type="radio"
+                                  name={`field-${field.id}`}
+                                  value={opt}
+                                  checked={customValues[field.id] === opt}
+                                  onChange={(e) =>
+                                    setCustomValues((prev) => ({
+                                      ...prev,
+                                      [field.id]: e.target.value,
+                                    }))
+                                  }
+                                  className="border-slate-700 bg-slate-800 text-primary focus:ring-primary"
+                                />
+                                {opt}
+                              </label>
+                            ))}
+                          </div>
+                        ) : field.field_type === 'select' ? (
+                          <select
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-sm text-white outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="">Select...</option>
+                            {(
+                              (field.field_options as { options?: string[] })?.options ?? []
+                            ).map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        ) : field.field_type === 'number' ? (
+                          <input
+                            type="number"
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Enter ${field.field_name}...`}
+                            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder:text-slate-500 outline-none focus:border-primary focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        ) : field.field_type === 'date' ? (
+                          <input
+                            type="date"
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                          />
+                        ) : (
+                          <Input
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Enter ${field.field_name}...`}
+                            className="bg-slate-800 border-slate-700 text-white h-8 text-sm placeholder:text-slate-500"
+                          />
+                        )}
                       </div>
                     ))}
                     <Button

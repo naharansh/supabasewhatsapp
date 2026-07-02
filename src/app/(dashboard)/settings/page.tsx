@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Settings, MessageSquare, Tag, User, Palette, CreditCard } from 'lucide-react';
+import { Settings, MessageSquare, Tag, User, Palette, CreditCard, List } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { TagManager } from '@/components/settings/tag-manager';
+import { CustomFieldManager } from '@/components/settings/custom-field-manager';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { PasswordForm } from '@/components/settings/password-form';
 import { SessionsCard } from '@/components/settings/sessions-card';
@@ -18,6 +19,7 @@ const TAB_VALUES = [
   'whatsapp',
   'templates',
   'tags',
+  'custom-fields',
   'appearance',
 ] as const;
 type TabValue = (typeof TAB_VALUES)[number];
@@ -91,6 +93,13 @@ export default function SettingsPage() {
             Tags
           </TabsTrigger>
           <TabsTrigger
+            value="custom-fields"
+            className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
+          >
+            <List className="size-4" />
+            Custom Fields
+          </TabsTrigger>
+          <TabsTrigger
             value="appearance"
             className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
           >
@@ -119,6 +128,10 @@ export default function SettingsPage() {
 
         <TabsContent value="tags">
           <TagManager />
+        </TabsContent>
+
+        <TabsContent value="custom-fields">
+          <CustomFieldManager />
         </TabsContent>
 
         <TabsContent value="appearance">
