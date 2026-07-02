@@ -187,10 +187,15 @@ export function TemplateManager() {
     if (!user) return;
     setSyncing(true);
     try {
-      const res = await fetch('/api/whatsapp/templates/sync', {
+      const res = await fetch('/api/whatsapp/templates?action=sync', {
         method: 'POST',
       });
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Sync failed with HTTP ${res.status} — the server returned an unexpected response. Check the server logs.`);
+      }
       if (!res.ok) {
         throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
       }

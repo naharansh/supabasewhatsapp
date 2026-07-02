@@ -102,7 +102,7 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, user?.id]);
 
   function handleOpenChange(next: boolean) {
     if (!next) {
