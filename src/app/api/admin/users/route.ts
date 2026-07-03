@@ -101,7 +101,7 @@ export async function PATCH(request: Request) {
       if (!subscription_id) {
         const { error: profileError } = await admin
           .from('profiles')
-          .update({ subscription_id: null, subscription_ends_at: null, contact_limit: 0, message_limit: 0 })
+          .update({ subscription_id: null, subscription_ends_at: null })
           .eq('user_id', userId);
 
         if (profileError) throw profileError;

@@ -11,7 +11,7 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { ShieldCheck, Loader2, Check, X, Clock } from "lucide-react";
+import { ShieldCheck, Loader2, Check, X, Clock, ArrowRight } from "lucide-react";
 
 interface UserItem {
   id: string;
@@ -37,6 +37,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<Record<string, string>>({});
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -242,23 +243,33 @@ export default function AdminUsersPage() {
                         {assigningId === u.id ? (
                           <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
                         ) : (
-                          <select
-                            value={u.subscription_id ?? ""}
-                            onChange={(e) =>
-                              handleAssignSubscription(
-                                u.id,
-                                e.target.value || null
-                              )
-                            }
-                            className="max-w-40 truncate rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-300 focus:border-primary focus:outline-none"
-                          >
-                            <option value="">No plan</option>
-                            {subscriptions.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name} (₹{s.price}/{s.duration_days}d)
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={pendingPlan[u.id] ?? u.subscription_id ?? ""}
+                              onChange={(e) =>
+                                setPendingPlan((prev) => ({ ...prev, [u.id]: e.target.value }))
+                              }
+                              className="max-w-36 truncate rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-300 focus:border-primary focus:outline-none"
+                            >
+                              <option value="">No plan</option>
+                              {subscriptions.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name} (₹{s.price}/{s.duration_days}d)
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => {
+                                const planId = pendingPlan[u.id] ?? u.subscription_id ?? "";
+                                handleAssignSubscription(u.id, planId || null);
+                                setPendingPlan((prev) => { const next = { ...prev }; delete next[u.id]; return next; });
+                              }}
+                              className="rounded border border-slate-700 bg-slate-800 p-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white"
+                              title="Apply plan"
+                            >
+                              <ArrowRight className="h-3 w-3" />
+                            </button>
+                          </div>
                         )}
                         <span className={`text-xs font-medium ${u.role === "superadmin" ? "text-amber-400" : "text-slate-500"}`}>
                           {u.role}
