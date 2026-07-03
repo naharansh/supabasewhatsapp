@@ -112,7 +112,16 @@ export default function AdminUsersPage() {
         return;
       }
 
-      toast.success(subscriptionId ? "Subscription assigned" : "Subscription removed");
+      const result = await res.json().catch(() => null);
+
+      if (subscriptionId && result?.planName) {
+        toast.success(
+          `"${result.planName}" assigned — ${result.planDurationDays}d, ${result.planContactLimit === 0 ? "unlimited" : result.planContactLimit + " contacts"}, ${result.planMessageLimit === 0 ? "unlimited" : result.planMessageLimit + " messages"}`,
+          { duration: 5000 }
+        );
+      } else {
+        toast.success(subscriptionId ? "Subscription assigned" : "Subscription removed");
+      }
       fetchUsers();
     } catch {
       toast.error("Something went wrong");

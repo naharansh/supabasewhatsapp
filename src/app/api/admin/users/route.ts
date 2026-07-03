@@ -107,7 +107,7 @@ export async function PATCH(request: Request) {
         if (profileError) throw profileError;
       } else {
         const [{ data: subscription }, { data: currentProfile }] = await Promise.all([
-          admin.from('subscriptions').select('duration_days, contact_limit, message_limit').eq('id', subscription_id).single(),
+          admin.from('subscriptions').select('name, duration_days, contact_limit, message_limit').eq('id', subscription_id).single(),
           admin.from('profiles').select('subscription_id, subscription_ends_at, contact_limit, message_limit').eq('user_id', userId).maybeSingle(),
         ]);
 
@@ -141,6 +141,15 @@ export async function PATCH(request: Request) {
           .eq('user_id', userId);
 
         if (profileError) throw profileError;
+
+        return NextResponse.json({
+          success: true,
+          planName: subscription.name,
+          planDurationDays: subscription.duration_days,
+          planContactLimit: planContactLimit,
+          planMessageLimit: planMessageLimit,
+          subscription_ends_at: newEnd.toISOString(),
+        });
       }
     }
 
