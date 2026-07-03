@@ -21,6 +21,9 @@ interface Profile {
   subscription_id: string | null;
   subscription_ends_at: string | null;
   contact_limit: number;
+  contact_count: number;
+  message_limit: number;
+  message_count: number;
   subscription: {
     id: string;
     name: string;
@@ -29,6 +32,7 @@ interface Profile {
     duration_days: number;
     features: string[];
     contact_limit: number;
+    message_limit: number;
     is_active: boolean;
   } | null;
 }
@@ -72,6 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           subscription_id: data.subscription_id ?? null,
           subscription_ends_at: data.subscription_ends_at ?? null,
           contact_limit: data.contact_limit ?? 0,
+          contact_count: data.contact_count ?? 0,
+          message_limit: data.message_limit ?? 0,
+          message_count: data.message_count ?? 0,
           subscription: data.subscription ?? null,
         });
       }

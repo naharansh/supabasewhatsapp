@@ -101,14 +101,14 @@ export async function PATCH(request: Request) {
       if (!subscription_id) {
         const { error: profileError } = await admin
           .from('profiles')
-          .update({ subscription_id: null, subscription_ends_at: null, contact_limit: 0 })
+          .update({ subscription_id: null, subscription_ends_at: null, contact_limit: 0, message_limit: 0 })
           .eq('user_id', userId);
 
         if (profileError) throw profileError;
       } else {
         const [{ data: subscription }, { data: currentProfile }] = await Promise.all([
-          admin.from('subscriptions').select('duration_days, contact_limit').eq('id', subscription_id).single(),
-          admin.from('profiles').select('subscription_id, subscription_ends_at, contact_limit').eq('user_id', userId).maybeSingle(),
+          admin.from('subscriptions').select('duration_days, contact_limit, message_limit').eq('id', subscription_id).single(),
+          admin.from('profiles').select('subscription_id, subscription_ends_at, contact_limit, message_limit').eq('user_id', userId).maybeSingle(),
         ]);
 
         if (!subscription) {
@@ -122,16 +122,21 @@ export async function PATCH(request: Request) {
         const baseDate = isStillActive ? currentEnd : now;
         const newEnd = new Date(baseDate.getTime() + subscription.duration_days * 86400000);
 
-        const planLimit = subscription.contact_limit ?? 0;
-        const currentLimit = currentProfile?.contact_limit ?? 0;
-        const newLimit = currentLimit + planLimit;
+        const planContactLimit = subscription.contact_limit ?? 0;
+        const currentContactLimit = currentProfile?.contact_limit ?? 0;
+        const newContactLimit = currentContactLimit + planContactLimit;
+
+        const planMessageLimit = subscription.message_limit ?? 0;
+        const currentMessageLimit = currentProfile?.message_limit ?? 0;
+        const newMessageLimit = currentMessageLimit + planMessageLimit;
 
         const { error: profileError } = await admin
           .from('profiles')
           .update({
             subscription_id,
             subscription_ends_at: newEnd.toISOString(),
-            contact_limit: newLimit,
+            contact_limit: newContactLimit,
+            message_limit: newMessageLimit,
           })
           .eq('user_id', userId);
 

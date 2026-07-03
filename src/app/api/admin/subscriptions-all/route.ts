@@ -24,7 +24,7 @@ export async function GET() {
 
   const { data: subscriptions, error } = await admin
     .from('subscriptions')
-    .select('id, name, price, duration_days, contact_limit, is_active')
+    .select('id, name, price, duration_days, contact_limit, message_limit, is_active')
     .eq('is_active', true)
     .order('name', { ascending: true });
 

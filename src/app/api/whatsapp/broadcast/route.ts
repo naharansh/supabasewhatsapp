@@ -150,6 +150,59 @@ export async function POST(request: Request) {
       )
     }
 
+    const { data: bProfile } = await supabase
+      .from('profiles')
+      .select('message_limit')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    const msgLimit = bProfile?.message_limit ?? 0
+    if (msgLimit > 0) {
+      const [{ data: convIds, error: convErr }, { data: userBroadcasts, error: bcErr }] = await Promise.all([
+        supabase.from('conversations').select('id').eq('user_id', userId),
+        supabase.from('broadcasts').select('id').eq('user_id', userId),
+      ])
+
+      if (convErr || bcErr) {
+        console.error('[broadcast] Failed to fetch conversations/broadcasts for limit check:', convErr ?? bcErr)
+        return NextResponse.json({ error: 'Database error checking message limit' }, { status: 500 })
+      }
+
+      const convIdList = convIds?.map(c => c.id) ?? []
+      const broadcastIdList = userBroadcasts?.map(b => b.id) ?? []
+
+      const [agentResult, broadcastResult] = await Promise.all([
+        convIdList.length > 0
+          ? supabase.from('messages').select('id', { count: 'exact', head: true }).eq('sender_type', 'agent').in('conversation_id', convIdList)
+          : Promise.resolve({ count: 0, error: null }),
+        broadcastIdList.length > 0
+          ? supabase.from('broadcast_recipients').select('id', { count: 'exact', head: true }).in('broadcast_id', broadcastIdList).in('status', ['sent', 'delivered', 'read'])
+          : Promise.resolve({ count: 0, error: null }),
+      ])
+
+      if (agentResult.error || broadcastResult.error) {
+        console.error('[broadcast] Count query failed:', agentResult.error ?? broadcastResult.error)
+        return NextResponse.json({ error: 'Database error checking message count' }, { status: 500 })
+      }
+
+      const totalSent = (agentResult.count ?? 0) + (broadcastResult.count ?? 0)
+      const available = msgLimit - totalSent
+
+      if (available <= 0) {
+        return NextResponse.json(
+          { error: `Message limit of ${msgLimit} exceeded. Cannot send more messages.` },
+          { status: 403 }
+        )
+      }
+
+      if (recipients.length > available) {
+        return NextResponse.json(
+          { error: `Message limit of ${msgLimit} exceeded. You can only send ${available} more messages.` },
+          { status: 403 }
+        )
+      }
+    }
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0

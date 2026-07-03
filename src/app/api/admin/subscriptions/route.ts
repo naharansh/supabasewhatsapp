@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { name, description, price, duration_days, features, is_active, contact_limit } = await request.json();
+    const { name, description, price, duration_days, features, is_active, contact_limit, message_limit } = await request.json();
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -68,6 +68,7 @@ export async function POST(request: Request) {
         duration_days: duration_days ?? 30,
         features: features ?? [],
         contact_limit: contact_limit ?? 0,
+        message_limit: message_limit ?? 0,
         is_active: is_active ?? true,
       })
       .select()
@@ -102,7 +103,7 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const { id, name, description, price, duration_days, features, is_active, contact_limit } = await request.json();
+    const { id, name, description, price, duration_days, features, is_active, contact_limit, message_limit } = await request.json();
 
     if (!id) {
       return NextResponse.json({ error: "Subscription ID is required" }, { status: 400 });
@@ -117,6 +118,7 @@ export async function PUT(request: Request) {
         duration_days,
         features,
         contact_limit,
+        message_limit,
         is_active,
       })
       .eq('id', id)

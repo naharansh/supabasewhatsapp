@@ -536,7 +536,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               // Step 1: Store Meta message_id immediately so the webhook
               // can find this recipient for status updates. Closes the
               // race window between Meta's 200 OK and our status write.
-              await fetch('/api/data', {
+              const msgIdRes = await fetch('/api/data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -553,7 +553,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               // already transitioned the status (e.g. to 'failed').
               // If the webhook already moved it, skip to avoid
               // overwriting a terminal state.
-              await fetch('/api/data', {
+              const sentRes = await fetch('/api/data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -570,6 +570,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                   ],
                 }),
               });
+
+              if (!msgIdRes.ok || !sentRes.ok) {
+                console.error('[broadcast] Failed to update recipient status:', recipient.id, msgIdRes.status, sentRes.status);
+              }
             } else {
               failedCount++;
               await fetch('/api/data', {
@@ -624,6 +628,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       });
 
       setProgress(100);
+      window.dispatchEvent(new CustomEvent('counts-updated'));
       return broadcast.id;
     } finally {
       setIsProcessing(false);

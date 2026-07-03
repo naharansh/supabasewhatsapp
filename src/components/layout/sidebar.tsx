@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
@@ -77,19 +77,34 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const totalUnread = useTotalUnread();
-  const [contactCount, setContactCount] = useState<number | null>(null);
+  const [liveContactCount, setLiveContactCount] = useState<number | null>(null);
+  const [liveMessageCount, setLiveMessageCount] = useState<number | null>(null);
+
+  const fetchCounts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/counts');
+      if (res.ok) {
+        const data = await res.json();
+        setLiveContactCount(data.contact_count);
+        setLiveMessageCount(data.message_count);
+      }
+    } catch {
+      // silent
+    }
+  }, []);
 
   useEffect(() => {
-    if (!profile) return;
-    fetch('/api/data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'select', table: 'contacts', limit: 1, count: true }),
-    })
-      .then(r => r.json())
-      .then(json => setContactCount(json.count ?? 0))
-      .catch(() => setContactCount(0));
-  }, [profile]);
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 30000);
+    window.addEventListener('counts-updated', fetchCounts);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('counts-updated', fetchCounts);
+    };
+  }, [fetchCounts]);
+
+  const displayContactCount = liveContactCount ?? profile?.contact_count ?? 0;
+  const displayMessageCount = liveMessageCount ?? profile?.message_count ?? 0;
 
   const allowedMenus = profile?.subscription?.features ?? null;
   const hasMenuRestrictions = Array.isArray(allowedMenus) && allowedMenus.length > 0;
@@ -311,21 +326,44 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               )}
               <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
                 <Users className="h-3 w-3" />
-                {contactCount !== null ? contactCount.toLocaleString() : "..."}
+                {displayContactCount.toLocaleString()}
                 {(profile?.contact_limit ?? 0) > 0 && (
-                  <> / {profile!.contact_limit.toLocaleString()}</>
+                  <> / {profile!.contact_limit.toLocaleString()} contacts</>
                 )}
+                {!profile?.contact_limit && <> contacts</>}
               </div>
-              {(profile?.contact_limit ?? 0) > 0 && contactCount !== null && (
+              {(profile?.contact_limit ?? 0) > 0 && (
                 <div className="h-1.5 w-full rounded-full bg-slate-700">
                   <div
                     className={`h-1.5 rounded-full ${
-                      contactCount >= profile!.contact_limit * 0.8
+                      displayContactCount >= profile!.contact_limit * 0.8
                         ? "bg-amber-500"
                         : "bg-primary"
                     }`}
                     style={{
-                      width: `${Math.min(Math.round((contactCount / profile!.contact_limit) * 100), 100)}%`,
+                      width: `${Math.min(Math.round((displayContactCount / profile!.contact_limit) * 100), 100)}%`,
+                    }}
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <MessageSquare className="h-3 w-3" />
+                {displayMessageCount.toLocaleString()}
+                {(profile?.message_limit ?? 0) > 0 && (
+                  <> / {profile!.message_limit.toLocaleString()} messages</>
+                )}
+                {!profile?.message_limit && <> messages</>}
+              </div>
+              {(profile?.message_limit ?? 0) > 0 && (
+                <div className="h-1.5 w-full rounded-full bg-slate-700">
+                  <div
+                    className={`h-1.5 rounded-full ${
+                      displayMessageCount >= profile!.message_limit * 0.8
+                        ? "bg-amber-500"
+                        : "bg-primary"
+                    }`}
+                    style={{
+                      width: `${Math.min(Math.round((displayMessageCount / profile!.message_limit) * 100), 100)}%`,
                     }}
                   />
                 </div>

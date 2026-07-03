@@ -1,9 +1,9 @@
 "use client";
 
+import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Check, CreditCard, Loader2, Radio, Zap, Workflow, Users } from "lucide-react";
-import { useState, useEffect } from "react";
+import { Check, CreditCard, Loader2, Radio, Zap, Workflow, Users, MessageSquare } from "lucide-react";
 
 const MENU_ICONS: Record<string, typeof Radio> = {
   Broadcasts: Radio,
@@ -13,19 +13,31 @@ const MENU_ICONS: Record<string, typeof Radio> = {
 
 export function SubscriptionCard() {
   const { profile, profileLoading } = useAuth();
-  const [contactCount, setContactCount] = useState<number | null>(null);
+  const [liveContactCount, setLiveContactCount] = useState<number | null>(null);
+  const [liveMessageCount, setLiveMessageCount] = useState<number | null>(null);
+
+  const fetchCounts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/counts');
+      if (res.ok) {
+        const data = await res.json();
+        setLiveContactCount(data.contact_count);
+        setLiveMessageCount(data.message_count);
+      }
+    } catch {
+      // silent
+    }
+  }, []);
 
   useEffect(() => {
-    if (!profile) return;
-    fetch('/api/data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'select', table: 'contacts', limit: 1, count: true }),
-    })
-      .then(r => r.json())
-      .then(json => setContactCount(json.count ?? 0))
-      .catch(() => setContactCount(0));
-  }, [profile]);
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 30000);
+    window.addEventListener('counts-updated', fetchCounts);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('counts-updated', fetchCounts);
+    };
+  }, [fetchCounts]);
 
   if (profileLoading) {
     return (
@@ -39,7 +51,10 @@ export function SubscriptionCard() {
 
   const sub = profile?.subscription;
   const endsAt = profile?.subscription_ends_at;
-  const limit = profile?.contact_limit ?? 0;
+  const contactLimit = profile?.contact_limit ?? 0;
+  const messageLimit = profile?.message_limit ?? 0;
+  const contactCount = liveContactCount ?? profile?.contact_count ?? 0;
+  const messageCount = liveMessageCount ?? profile?.message_count ?? 0;
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(price);
@@ -47,11 +62,16 @@ export function SubscriptionCard() {
 
   const isExpired = endsAt ? new Date(endsAt) < new Date() : false;
 
-  const usagePercent = limit > 0 && contactCount !== null
-    ? Math.min(Math.round((contactCount / limit) * 100), 100)
+  const contactUsagePercent = contactLimit > 0
+    ? Math.min(Math.round((contactCount / contactLimit) * 100), 100)
     : 0;
 
-  const isNearLimit = limit > 0 && contactCount !== null && contactCount >= limit * 0.8;
+  const messageUsagePercent = messageLimit > 0
+    ? Math.min(Math.round((messageCount / messageLimit) * 100), 100)
+    : 0;
+
+  const isNearContactLimit = contactLimit > 0 && contactCount >= contactLimit * 0.8;
+  const isNearMessageLimit = messageLimit > 0 && messageCount >= messageLimit * 0.8;
 
   if (!sub) {
     return (
@@ -109,41 +129,55 @@ export function SubscriptionCard() {
           </div>
         )}
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm text-slate-400">
-            <Users className="h-4 w-4" />
-            {limit > 0 ? (
-              <span>
-                <span className="text-slate-300 font-medium">
-                  {contactCount !== null ? contactCount.toLocaleString() : "..."}
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <Users className="h-4 w-4" />
+              {contactLimit > 0 ? (
+                <span>
+                  <span className="text-slate-300 font-medium">{contactCount.toLocaleString()}</span>
+                  {" / "}
+                  <span className="text-slate-300 font-medium">{contactLimit.toLocaleString()}</span> contacts used
                 </span>
-                {" / "}
-                <span className="text-slate-300 font-medium">
-                  {limit.toLocaleString()}
-                </span>{" "}
-                contacts used
-              </span>
-            ) : (
-              <span>
-                <span className="text-slate-300 font-medium">
-                  {contactCount !== null ? contactCount.toLocaleString() : "..."}
-                </span>{" "}
-                contacts
-              </span>
+              ) : (
+                <span>
+                  <span className="text-slate-300 font-medium">{contactCount.toLocaleString()}</span> contacts
+                </span>
+              )}
+            </div>
+            {contactLimit > 0 && (
+              <div className="h-2 w-full rounded-full bg-slate-800">
+                <div
+                  className={`h-2 rounded-full transition-all ${isNearContactLimit ? "bg-amber-500" : "bg-primary"}`}
+                  style={{ width: `${contactUsagePercent}%` }}
+                />
+              </div>
             )}
           </div>
-          {limit > 0 && contactCount !== null && (
-            <div className="h-2 w-full rounded-full bg-slate-800">
-              <div
-                className={`h-2 rounded-full transition-all ${
-                  isNearLimit
-                    ? "bg-amber-500"
-                    : "bg-primary"
-                }`}
-                style={{ width: `${usagePercent}%` }}
-              />
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <MessageSquare className="h-4 w-4" />
+              {messageLimit > 0 ? (
+                <span>
+                  <span className="text-slate-300 font-medium">{messageCount.toLocaleString()}</span>
+                  {" / "}
+                  <span className="text-slate-300 font-medium">{messageLimit.toLocaleString()}</span> messages used
+                </span>
+              ) : (
+                <span>
+                  <span className="text-slate-300 font-medium">{messageCount.toLocaleString()}</span> messages
+                </span>
+              )}
             </div>
-          )}
+            {messageLimit > 0 && (
+              <div className="h-2 w-full rounded-full bg-slate-800">
+                <div
+                  className={`h-2 rounded-full transition-all ${isNearMessageLimit ? "bg-amber-500" : "bg-primary"}`}
+                  style={{ width: `${messageUsagePercent}%` }}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {Array.isArray(sub.features) && sub.features.length > 0 && (

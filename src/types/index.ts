@@ -418,6 +418,7 @@ export interface Subscription {
   duration_days: number;
   features: string[];
   contact_limit: number;
+  message_limit: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;

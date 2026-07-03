@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   const [profileResult, authUserResult, subscriptionResult] = await Promise.all([
     admin.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
     admin.auth.admin.getUserById(userId),
-    admin.from('profiles').select('subscription_id, subscription_ends_at, subscriptions(id, name, description, price, duration_days, features, contact_limit, is_active)').eq('user_id', userId).maybeSingle(),
+    admin.from('profiles').select('subscription_id, subscription_ends_at, subscriptions(id, name, description, price, duration_days, features, contact_limit, message_limit, is_active)').eq('user_id', userId).maybeSingle(),
   ]);
 
   if (profileResult.error) throw profileResult.error;
@@ -32,6 +32,41 @@ export async function GET(request: Request) {
   if (!profile) {
     return NextResponse.json(null);
   }
+
+  const { data: convIds } = await admin
+    .from('conversations')
+    .select('id')
+    .eq('user_id', userId);
+
+  const ids = convIds?.map(c => c.id) ?? [];
+
+  const { count: contactCount } = await admin
+    .from('contacts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId);
+
+  const agentQueryOrFallback = ids.length > 0
+    ? admin.from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('sender_type', 'agent')
+        .in('conversation_id', ids)
+    : Promise.resolve({ count: 0, error: null });
+
+  const { data: userBroadcasts } = await admin
+    .from('broadcasts')
+    .select('id')
+    .eq('user_id', userId);
+
+  const broadcastIds = userBroadcasts?.map(b => b.id) ?? [];
+  const broadcastQueryOrFallback = broadcastIds.length > 0
+    ? admin.from('broadcast_recipients')
+        .select('id', { count: 'exact', head: true })
+        .in('broadcast_id', broadcastIds)
+        .in('status', ['sent', 'delivered', 'read'])
+    : Promise.resolve({ count: 0, error: null });
+
+  const [agentResult, broadcastResult] = await Promise.all([agentQueryOrFallback, broadcastQueryOrFallback]);
+  const messageCount = (agentResult.count ?? 0) + (broadcastResult.count ?? 0);
 
   return NextResponse.json({
     id: profile.id,
@@ -45,6 +80,9 @@ export async function GET(request: Request) {
     subscription_id: profile.subscription_id ?? null,
     subscription_ends_at: profile.subscription_ends_at ?? null,
     contact_limit: profile.contact_limit ?? 0,
+    contact_count: contactCount ?? 0,
+    message_limit: profile.message_limit ?? 0,
+    message_count: messageCount,
     subscription: subscriptionData?.subscriptions ?? null,
   });
 }
