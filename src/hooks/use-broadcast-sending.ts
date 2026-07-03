@@ -164,7 +164,7 @@ async function fetchCustomValueIndex(
 }
 
 export function useBroadcastSending(): UseBroadcastSendingReturn {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -260,6 +260,31 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
     if (!user) {
       throw new Error('You are not signed in.');
+    }
+
+    const contactLimit = profile?.contact_limit ?? 0;
+    if (contactLimit > 0) {
+      const countRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contacts',
+          limit: 1,
+          count: true,
+        }),
+      });
+      const countJson = await countRes.json();
+      const currentCount = countJson.count || 0;
+      const availableSlots = contactLimit - currentCount;
+
+      if (availableSlots <= 0) {
+        throw new Error(`Contact limit of ${contactLimit} reached. Cannot import more contacts.`);
+      }
+
+      if (csvRows.length > availableSlots) {
+        throw new Error(`CSV has ${csvRows.length} contacts, but only ${availableSlots} slot${availableSlots === 1 ? '' : 's'} available (limit: ${contactLimit}).`);
+      }
     }
 
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();

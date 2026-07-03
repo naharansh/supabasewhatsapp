@@ -29,6 +29,26 @@ function emptyResponse(action: string) {
   return NextResponse.json({ data: action === 'select' ? [] : null, count: 0 })
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFilters(q: any, table: string, userId: string, fFilters: any[], fOrFilter?: string): any {
+  if (TABLES_WITH_USER_ID.includes(table)) {
+    q = q.eq('user_id', userId)
+  }
+  for (const f of fFilters) {
+    const { column, operator, value } = f
+    switch (operator) {
+      case 'eq': q = q.eq(column, value); break
+      case 'neq': q = q.neq(column, value); break
+      case 'in': q = q.in(column, value); break
+      case 'ilike': q = q.ilike(column, value); break
+      case 'gte': q = q.gte(column, value); break
+      case 'lte': q = q.lte(column, value); break
+    }
+  }
+  if (fOrFilter) q = q.or(fOrFilter)
+  return q
+}
+
 export async function POST(request: Request) {
   let action = ''
   let table = ''
@@ -52,155 +72,117 @@ export async function POST(request: Request) {
 
     const supabase = createAdminClient()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query: any
+    if (action === 'select') {
+      const { select: columns = '*', filters = [], order, limit, offset, single, count, or: orFilter } = body
 
-    switch (action) {
-      case 'select': {
-        const { select: columns = '*', filters = [], order, limit, offset, single, count, or: orFilter } = body
-        query = supabase.from(table).select(columns, count ? { count: 'exact' } : undefined)
+      let exactCount: number | undefined
+      if (count) {
+        let countQuery: any = supabase.from(table).select('id', { count: 'exact', head: true })
+        countQuery = applyFilters(countQuery, table, userId, filters, orFilter)
+        const { count: exact } = await countQuery
+        exactCount = exact ?? undefined
+      }
 
-        if (TABLES_WITH_USER_ID.includes(table)) {
-          query = query.eq('user_id', userId)
+      let query: any = supabase.from(table).select(columns)
+      query = applyFilters(query, table, userId, filters, orFilter)
+
+      if (order) {
+        const orders = Array.isArray(order) ? order : [order]
+        for (const o of orders) {
+          const { column, ascending = true } = o
+          query = query.order(column, { ascending })
         }
+        query = query.order('id', { ascending: false })
+      }
 
-        for (const f of filters) {
-          const { column, operator, value } = f
-          switch (operator) {
-            case 'eq':
-              query = query.eq(column, value)
-              break
-            case 'neq':
-              query = query.neq(column, value)
-              break
-            case 'in':
-              query = query.in(column, value)
-              break
-            case 'ilike':
-              query = query.ilike(column, value)
-              break
-            case 'gte':
-              query = query.gte(column, value)
-              break
-            case 'lte':
-              query = query.lte(column, value)
-              break
-          }
-        }
+      if (limit && offset !== undefined) {
+        query = query.range(offset, offset + limit - 1)
+      } else {
+        if (limit) query = query.limit(limit)
+        if (offset !== undefined) query = query.range(offset, offset + 1000000)
+      }
 
-        if (orFilter) {
-          query = query.or(orFilter)
-        }
-
-        if (order) {
-          const orders = Array.isArray(order) ? order : [order]
-          for (const o of orders) {
-            const { column, ascending = true } = o
-            query = query.order(column, { ascending })
-          }
-          query = query.order('id', { ascending: false })
-        }
-
-        if (limit && offset !== undefined) {
-          query = query.range(offset, offset + limit - 1)
-        } else {
-          if (limit) query = query.limit(limit)
-          if (offset !== undefined) query = query.range(offset, offset + 1000000)
-        }
-
-        if (single) {
-          const { data, error } = await query.maybeSingle()
-          if (error) throw error
-          return NextResponse.json({ data })
-        }
-
-        if (count) {
-          const { data, count: total, error } = await query
-          if (error) throw error
-          return NextResponse.json({ data, count: total })
-        }
-
-        const { data, error } = await query
+      if (single) {
+        const { data, error } = await query.maybeSingle()
         if (error) throw error
         return NextResponse.json({ data })
       }
 
-      case 'insert': {
-        const { values, select = false } = body
-        query = supabase.from(table).insert(values)
-        if (select) query = query.select()
-        const { data, error } = await query
-        if (error) throw error
-        return NextResponse.json({ data })
-      }
-
-      case 'update': {
-        const { values, filters = [] } = body
-        query = supabase.from(table).update(values)
-
-        if (TABLES_WITH_USER_ID.includes(table)) {
-          query = query.eq('user_id', userId)
-        }
-
-        for (const f of filters) {
-          if (f.operator === 'eq') {
-            query = query.eq(f.column, f.value)
-          }
-        }
-        const { data, error } = await query
-        if (error) throw error
-        return NextResponse.json({ data })
-      }
-
-      case 'upsert': {
-        const { values, onConflict, select = false } = body
-        query = supabase.from(table).upsert(values, onConflict ? { onConflict, ignoreDuplicates: false } : undefined)
-        if (select) query = query.select()
-        const { data, error } = await query
-        if (error) throw error
-        return NextResponse.json({ data })
-      }
-
-      case 'delete': {
-        const { filters = [] } = body
-
-        // Broadcasts have a cascade + aggregate trigger that can fail
-        // when the trigger tries to UPDATE counts on a row that is being
-        // deleted. Delete recipients first so the trigger fires while
-        // the broadcast row still exists.
-        if (table === 'broadcasts') {
-          const bcFilter = filters.find((f: { column: string }) => f.column === 'id')
-          const bcId = bcFilter?.value
-          if (bcId && TABLES_WITH_USER_ID.includes(table)) {
-            const { error: recErr } = await supabase
-              .from('broadcast_recipients')
-              .delete()
-              .eq('broadcast_id', bcId)
-            if (recErr) throw recErr
-          }
-        }
-
-        query = supabase.from(table).delete()
-
-        if (TABLES_WITH_USER_ID.includes(table)) {
-          query = query.eq('user_id', userId)
-        }
-
-        for (const f of filters) {
-          if (f.operator === 'eq') {
-            query = query.eq(f.column, f.value)
-          } else if (f.operator === 'in') {
-            query = query.in(f.column, f.value)
-          }
-        }
-        const { data, error } = await query
-        if (error) throw error
-        return NextResponse.json({ data })
-      }
-
-      default:
-        return NextResponse.json({ error: `Unknown action: '${action}'` }, { status: 400 })
+      const { data, error } = await query
+      if (error) throw error
+      return NextResponse.json({ data, count: exactCount })
     }
+
+    if (action === 'insert') {
+      const { values, select = false } = body
+      let query: any = supabase.from(table).insert(values)
+      if (select) query = query.select()
+      const { data, error } = await query
+      if (error) throw error
+      return NextResponse.json({ data })
+    }
+
+    if (action === 'update') {
+      const { values, filters = [] } = body
+      let query: any = supabase.from(table).update(values)
+
+      if (TABLES_WITH_USER_ID.includes(table)) {
+        query = query.eq('user_id', userId)
+      }
+
+      for (const f of filters) {
+        if (f.operator === 'eq') {
+          query = query.eq(f.column, f.value)
+        }
+      }
+      const { data, error } = await query
+      if (error) throw error
+      return NextResponse.json({ data })
+    }
+
+    if (action === 'upsert') {
+      const { values, onConflict, select = false } = body
+      let query: any = supabase.from(table).upsert(values, onConflict ? { onConflict, ignoreDuplicates: false } : undefined)
+      if (select) query = query.select()
+      const { data, error } = await query
+      if (error) throw error
+      return NextResponse.json({ data })
+    }
+
+    if (action === 'delete') {
+      const { filters = [] } = body
+
+      if (table === 'broadcasts') {
+        const bcFilter = filters.find((f: { column: string }) => f.column === 'id')
+        const bcId = bcFilter?.value
+        if (bcId && TABLES_WITH_USER_ID.includes(table)) {
+          const { error: recErr } = await supabase
+            .from('broadcast_recipients')
+            .delete()
+            .eq('broadcast_id', bcId)
+          if (recErr) throw recErr
+        }
+      }
+
+      let query: any = supabase.from(table).delete()
+
+      if (TABLES_WITH_USER_ID.includes(table)) {
+        query = query.eq('user_id', userId)
+      }
+
+      for (const f of filters) {
+        if (f.operator === 'eq') {
+          query = query.eq(f.column, f.value)
+        } else if (f.operator === 'in') {
+          query = query.in(f.column, f.value)
+        }
+      }
+      const { data, error } = await query
+      if (error) throw error
+      return NextResponse.json({ data })
+    }
+
+    return NextResponse.json({ error: `Unknown action: '${action}'` }, { status: 400 })
   } catch (error) {
     const code =
       error && typeof error === 'object' && 'code' in error

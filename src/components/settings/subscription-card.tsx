@@ -13,20 +13,13 @@ const MENU_ICONS: Record<string, typeof Radio> = {
 
 export function SubscriptionCard() {
   const { profile, profileLoading } = useAuth();
-  const [liveContactCount, setLiveContactCount] = useState<number | null>(null);
-  const [liveMessageCount, setLiveMessageCount] = useState<number | null>(null);
+  const [counts, setCounts] = useState<{ contact: number; message: number } | null>(null);
 
   const fetchCounts = useCallback(async () => {
     try {
       const res = await fetch('/api/counts');
-      if (res.ok) {
-        const data = await res.json();
-        setLiveContactCount(data.contact_count);
-        setLiveMessageCount(data.message_count);
-      }
-    } catch {
-      // silent
-    }
+      if (res.ok) setCounts(await res.json());
+    } catch { /* silent */ }
   }, []);
 
   useEffect(() => {
@@ -38,6 +31,15 @@ export function SubscriptionCard() {
       window.removeEventListener('counts-updated', fetchCounts);
     };
   }, [fetchCounts]);
+
+  useEffect(() => {
+    if (profile?.contact_count != null || profile?.message_count != null) {
+      setCounts(prev => ({
+        contact: profile?.contact_count ?? prev?.contact ?? 0,
+        message: profile?.message_count ?? prev?.message ?? 0,
+      }));
+    }
+  }, [profile?.contact_count, profile?.message_count]);
 
   if (profileLoading) {
     return (
@@ -53,8 +55,8 @@ export function SubscriptionCard() {
   const endsAt = profile?.subscription_ends_at;
   const contactLimit = profile?.contact_limit ?? 0;
   const messageLimit = profile?.message_limit ?? 0;
-  const contactCount = liveContactCount ?? profile?.contact_count ?? 0;
-  const messageCount = liveMessageCount ?? profile?.message_count ?? 0;
+  const contactCount = counts?.contact ?? profile?.contact_count ?? 0;
+  const messageCount = counts?.message ?? profile?.message_count ?? 0;
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(price);

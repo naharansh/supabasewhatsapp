@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +15,7 @@ import {
   ArrowLeft,
   X,
   FileText,
+  AlertTriangle,
 } from 'lucide-react';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
@@ -83,6 +86,7 @@ export function Step2SelectAudience({
   onNext,
   onBack,
 }: Step2Props) {
+  const { profile } = useAuth();
   const [tags, setTags] = useState<Tag[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
@@ -91,6 +95,7 @@ export function Step2SelectAudience({
   const [loadingCount, setLoadingCount] = useState(false);
   const [csvFileName, setCsvFileName] = useState('');
   const [isParsing, setIsParsing] = useState(false);
+  const [csvLimitError, setCsvLimitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Tags are used both by the primary "Filter by Tags" audience type
@@ -337,10 +342,44 @@ export function Step2SelectAudience({
 
     setIsParsing(true);
     setCsvFileName(file.name);
+    setCsvLimitError(null);
 
     try {
       const text = await file.text();
       const rows = parseCSV(text);
+
+      const contactLimit = profile?.contact_limit ?? 0;
+      if (contactLimit > 0) {
+        const countRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            limit: 1,
+            count: true,
+          }),
+        });
+        const countJson = await countRes.json();
+        const currentCount = countJson.count || 0;
+        const availableSlots = contactLimit - currentCount;
+
+        if (availableSlots <= 0) {
+          setCsvLimitError(`Contact limit of ${contactLimit} reached. Cannot import more contacts.`);
+          setCsvFileName('');
+          onUpdate({ ...audience, csvContacts: [] });
+          toast.error(`Contact limit of ${contactLimit} reached. Cannot import more contacts.`);
+          return;
+        }
+
+        if (rows.length > availableSlots) {
+          setCsvLimitError(`CSV has ${rows.length} contacts, but only ${availableSlots} slot${availableSlots === 1 ? '' : 's'} available (limit: ${contactLimit}).`);
+          onUpdate({ ...audience, csvContacts: [] });
+          toast.error(`Contact limit exceeded. CSV has ${rows.length} contacts, but only ${availableSlots} available.`);
+          return;
+        }
+      }
+
       onUpdate({ ...audience, csvContacts: rows });
     } catch {
       setCsvFileName('');
@@ -352,6 +391,7 @@ export function Step2SelectAudience({
 
   function clearCsv() {
     setCsvFileName('');
+    setCsvLimitError(null);
     onUpdate({ ...audience, csvContacts: [] });
   }
 
@@ -363,7 +403,8 @@ export function Step2SelectAudience({
       audience.customField.value.length > 0) ||
     (audience.type === 'csv' &&
       audience.csvContacts &&
-      audience.csvContacts.length > 0);
+      audience.csvContacts.length > 0 &&
+      !csvLimitError);
 
   return (
     <div className="space-y-6">
@@ -433,6 +474,13 @@ export function Step2SelectAudience({
             onChange={handleFileChange}
             className="hidden"
           />
+
+          {csvLimitError && (
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+              <p className="text-sm text-red-300">{csvLimitError}</p>
+            </div>
+          )}
 
           {csvFileName ? (
             <div className="space-y-3">

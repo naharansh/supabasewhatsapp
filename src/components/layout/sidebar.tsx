@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
+import { registerUpdater } from "@/lib/count-bridge";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -77,20 +78,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const totalUnread = useTotalUnread();
-  const [liveContactCount, setLiveContactCount] = useState<number | null>(null);
-  const [liveMessageCount, setLiveMessageCount] = useState<number | null>(null);
+  const [counts, setCounts] = useState<{ contact: number; message: number } | null>(null);
 
   const fetchCounts = useCallback(async () => {
     try {
       const res = await fetch('/api/counts');
-      if (res.ok) {
-        const data = await res.json();
-        setLiveContactCount(data.contact_count);
-        setLiveMessageCount(data.message_count);
-      }
-    } catch {
-      // silent
-    }
+      if (res.ok) setCounts(await res.json());
+    } catch { /* silent */ }
   }, []);
 
   useEffect(() => {
@@ -103,8 +97,21 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     };
   }, [fetchCounts]);
 
-  const displayContactCount = liveContactCount ?? profile?.contact_count ?? 0;
-  const displayMessageCount = liveMessageCount ?? profile?.message_count ?? 0;
+  useEffect(() => registerUpdater(({ contactCount, messageCount }) => {
+    setCounts({ contact: contactCount, message: messageCount });
+  }), []);
+
+  useEffect(() => {
+    if (profile?.contact_count != null || profile?.message_count != null) {
+      setCounts(prev => ({
+        contact: profile?.contact_count ?? prev?.contact ?? 0,
+        message: profile?.message_count ?? prev?.message ?? 0,
+      }));
+    }
+  }, [profile?.contact_count, profile?.message_count]);
+
+  const displayContactCount = counts?.contact ?? profile?.contact_count ?? 0;
+  const displayMessageCount = counts?.message ?? profile?.message_count ?? 0;
 
   const allowedMenus = profile?.subscription?.features ?? null;
   const hasMenuRestrictions = Array.isArray(allowedMenus) && allowedMenus.length > 0;

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
+import { pushCounts } from '@/lib/count-bridge';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,6 +55,18 @@ interface ContactWithTags extends Contact {
 }
 
 export default function ContactsPage() {
+  const { refreshProfile } = useAuth();
+
+  async function pushCountsBridge() {
+    try {
+      const res = await fetch('/api/counts');
+      if (res.ok) {
+        const data = await res.json();
+        pushCounts(data.contact_count, data.message_count);
+      }
+    } catch { /* silent */ }
+  }
+
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -257,6 +271,9 @@ export default function ContactsPage() {
       toast.success(`${ids.length} contact${ids.length > 1 ? 's' : ''} deleted`);
       setSelectedIds(new Set());
       fetchContacts();
+      refreshProfile();
+      pushCountsBridge();
+      window.dispatchEvent(new CustomEvent('counts-updated'));
     }
 
     setBulkDeleting(false);
@@ -283,6 +300,9 @@ export default function ContactsPage() {
     } else {
       toast.success('Contact deleted');
       fetchContacts();
+      refreshProfile();
+      pushCountsBridge();
+      window.dispatchEvent(new CustomEvent('counts-updated'));
     }
 
     setDeleting(false);
@@ -569,6 +589,9 @@ export default function ContactsPage() {
         onSaved={() => {
           fetchContacts();
           fetchTags();
+          refreshProfile();
+          pushCountsBridge();
+          window.dispatchEvent(new CustomEvent('counts-updated'));
         }}
       />
 
@@ -577,14 +600,24 @@ export default function ContactsPage() {
         open={detailOpen}
         onOpenChange={setDetailOpen}
         contactId={detailContactId}
-        onUpdated={fetchContacts}
+        onUpdated={() => {
+          fetchContacts();
+          refreshProfile();
+          pushCountsBridge();
+          window.dispatchEvent(new CustomEvent('counts-updated'));
+        }}
       />
 
       {/* Import Modal */}
       <ImportModal
         open={importOpen}
         onOpenChange={setImportOpen}
-        onImported={fetchContacts}
+        onImported={() => {
+          fetchContacts();
+          refreshProfile();
+          pushCountsBridge();
+          window.dispatchEvent(new CustomEvent('counts-updated'));
+        }}
       />
 
       {/* Delete Confirmation */}
