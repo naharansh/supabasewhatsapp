@@ -619,16 +619,61 @@ DROP INDEX IF EXISTS idx_profiles_subscription_id;
 CREATE INDEX idx_profiles_subscription_id ON public.profiles(subscription_id);
 
 -- ============================================================
--- Fix: deals FKs that block contact/pipeline deletion
+-- Fix: ALL FKs blocking contact deletion (23503 error)
 --
--- deals.conversation_id had NO ACTION (default), so deleting a
--- contact → CASCADE-deletes conversations → blocked by deals.
--- deals.stage_id had NO ACTION, so deleting a pipeline →
--- CASCADE-deletes stages → blocked by deals.
+-- Root causes:
+--   1. deals.contact_id → NO ACTION (blocks direct delete)
+--   2. broadcast_recipients.contact_id → NO ACTION (blocks direct delete)
+--   3. deals.conversation_id → NO ACTION (blocks CASCADE on conversations)
+--   4. deals.stage_id → NO ACTION (blocks CASCADE on pipeline_stages)
 --
--- Both changed to ON DELETE SET NULL (deal survives, link nulled).
+-- Fix: All changed to ON DELETE SET NULL.
+-- Idempotent — safe to run multiple times.
 -- ============================================================
 
+-- ── 1. broadcast_recipients.contact_id ────────────────────────
+ALTER TABLE broadcast_recipients
+  ALTER COLUMN contact_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'broadcast_recipients_contact_id_fkey'
+      AND conrelid = 'broadcast_recipients'::regclass
+  ) THEN
+    ALTER TABLE broadcast_recipients
+      DROP CONSTRAINT broadcast_recipients_contact_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE broadcast_recipients
+  ADD CONSTRAINT broadcast_recipients_contact_id_fkey
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    ON DELETE SET NULL;
+
+-- ── 2. deals.contact_id ──────────────────────────────────────
+ALTER TABLE deals
+  ALTER COLUMN contact_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'deals_contact_id_fkey'
+      AND conrelid = 'deals'::regclass
+  ) THEN
+    ALTER TABLE deals
+      DROP CONSTRAINT deals_contact_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE deals
+  ADD CONSTRAINT deals_contact_id_fkey
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    ON DELETE SET NULL;
+
+-- ── 3. deals.conversation_id (indirect blocker) ──────────────
 DO $$
 BEGIN
   IF EXISTS (
@@ -646,6 +691,7 @@ ALTER TABLE deals
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
     ON DELETE SET NULL;
 
+-- ── 4. deals.stage_id (indirect blocker) ─────────────────────
 DO $$
 BEGIN
   IF EXISTS (

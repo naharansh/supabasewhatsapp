@@ -168,18 +168,58 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  async function fetchContactsByIds(ids: string[]): Promise<Contact[]> {
+    if (ids.length === 0) return [];
+    const PAGE = 500;
+    const all: Contact[] = [];
+    for (let i = 0; i < ids.length; i += PAGE) {
+      const chunk = ids.slice(i, i + PAGE);
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contacts',
+          filters: [{ column: 'id', operator: 'in', value: chunk }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(`Failed to fetch contacts: ${err.error || res.statusText}`);
+      }
+      const json = await res.json();
+      all.push(...(json.data ?? []));
+    }
+    return all;
+  }
+
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     let contacts: Contact[] = [];
 
     if (audience.type === 'all') {
-      const res = await fetch('/api/data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'select', table: 'contacts' }),
-      });
-      if (!res.ok) throw new Error('Failed to fetch contacts');
-      const json = await res.json();
-      contacts = json.data ?? [];
+      let page = 0;
+      const PAGE = 1000;
+      while (true) {
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            limit: PAGE,
+            offset: page * PAGE,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(`Failed to fetch contacts: ${err.error || res.statusText}`);
+        }
+        const json = await res.json();
+        const batch = json.data ?? [];
+        contacts.push(...batch);
+        if (batch.length < PAGE) break;
+        page++;
+      }
     } else if (
       audience.type === 'tags' &&
       audience.tagIds &&
@@ -195,25 +235,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
         }),
       });
-      if (!tagRes.ok) throw new Error('Failed to fetch contact tags');
+      if (!tagRes.ok) {
+        const err = await tagRes.json().catch(() => ({}));
+        throw new Error(`Failed to fetch contact tags: ${err.error || tagRes.statusText}`);
+      }
       const tagJson = await tagRes.json();
 
       if (tagJson.data && tagJson.data.length > 0) {
         const uniqueContactIds = [
-          ...new Set(tagJson.data.map((ct: { contact_id: string }) => ct.contact_id)),
+          ...new Set(tagJson.data.map((ct: { contact_id: string }) => ct.contact_id).filter(Boolean)),
         ];
-        const contactRes = await fetch('/api/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'select',
-            table: 'contacts',
-            filters: [{ column: 'id', operator: 'in', value: uniqueContactIds }],
-          }),
-        });
-        if (!contactRes.ok) throw new Error('Failed to fetch contacts');
-        const contactJson = await contactRes.json();
-        contacts = contactJson.data ?? [];
+        contacts = await fetchContactsByIds(uniqueContactIds);
       }
     } else if (audience.type === 'custom_field' && audience.customField) {
       contacts = await resolveCustomFieldAudience(audience.customField);
@@ -234,7 +266,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       });
       if (excludeRes.ok) {
         const excludeJson = await excludeRes.json();
-        const excludedIds = new Set((excludeJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        const excludedIds = new Set((excludeJson.data ?? []).map((r: { contact_id: string }) => r.contact_id).filter(Boolean));
         contacts = contacts.filter((c) => !excludedIds.has(c.id));
       }
     }

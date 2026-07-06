@@ -1,19 +1,59 @@
 -- ============================================================
--- Fix: deals.conversation_id FK blocks contact deletion
+-- Fix: ALL FKs blocking contact deletion (23503 error)
 --
--- Error: 23503: update or delete on table "contacts" violates
---   foreign key constraint on table "deals"
+-- Root causes:
+--   1. deals.contact_id → NO ACTION (blocks direct delete)
+--   2. broadcast_recipients.contact_id → NO ACTION (blocks direct delete)
+--   3. deals.conversation_id → NO ACTION (blocks CASCADE on conversations)
+--   4. deals.stage_id → NO ACTION (blocks CASCADE on pipeline_stages)
 --
--- Root cause: Deleting a contact CASCADE-deletes its conversations,
--- but deals.conversation_id REFERENCES conversations(id) with
--- NO ACTION (default), which blocks the cascade.
---
--- Fix: Change to ON DELETE SET NULL (deal survives, conversation
--- link is nulled — the UI already handles NULL conversation_id).
---
+-- Fix: All changed to ON DELETE SET NULL.
 -- Idempotent — safe to run multiple times.
 -- ============================================================
 
+-- ── 1. broadcast_recipients.contact_id ────────────────────────
+ALTER TABLE broadcast_recipients
+  ALTER COLUMN contact_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'broadcast_recipients_contact_id_fkey'
+      AND conrelid = 'broadcast_recipients'::regclass
+  ) THEN
+    ALTER TABLE broadcast_recipients
+      DROP CONSTRAINT broadcast_recipients_contact_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE broadcast_recipients
+  ADD CONSTRAINT broadcast_recipients_contact_id_fkey
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    ON DELETE SET NULL;
+
+-- ── 2. deals.contact_id ──────────────────────────────────────
+ALTER TABLE deals
+  ALTER COLUMN contact_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'deals_contact_id_fkey'
+      AND conrelid = 'deals'::regclass
+  ) THEN
+    ALTER TABLE deals
+      DROP CONSTRAINT deals_contact_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE deals
+  ADD CONSTRAINT deals_contact_id_fkey
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    ON DELETE SET NULL;
+
+-- ── 3. deals.conversation_id (indirect blocker) ──────────────
 DO $$
 BEGIN
   IF EXISTS (
@@ -31,9 +71,7 @@ ALTER TABLE deals
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
     ON DELETE SET NULL;
 
--- Also fix deals.stage_id: when a pipeline is deleted, its stages
--- CASCADE-delete, but deals referencing those stages would block.
--- Change to ON DELETE SET NULL.
+-- ── 4. deals.stage_id (indirect blocker) ─────────────────────
 DO $$
 BEGIN
   IF EXISTS (
