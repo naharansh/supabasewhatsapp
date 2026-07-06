@@ -243,7 +243,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       if (tagJson.data && tagJson.data.length > 0) {
         const uniqueContactIds = [
-          ...new Set(tagJson.data.map((ct: { contact_id: string }) => ct.contact_id).filter(Boolean)),
+          ...new Set(tagJson.data.map((ct: { contact_id: string }) => ct.contact_id).filter(Boolean) as string[]),
         ];
         contacts = await fetchContactsByIds(uniqueContactIds);
       }
@@ -266,7 +266,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       });
       if (excludeRes.ok) {
         const excludeJson = await excludeRes.json();
-        const excludedIds = new Set((excludeJson.data ?? []).map((r: { contact_id: string }) => r.contact_id).filter(Boolean));
+        const excludedIds = new Set((excludeJson.data ?? []).map((r: { contact_id: string }) => r.contact_id).filter(Boolean) as string[]);
         contacts = contacts.filter((c) => !excludedIds.has(c.id));
       }
     }
