@@ -75,7 +75,12 @@ export async function GET() {
 
     if (error) throw error
 
-    return NextResponse.json(templates ?? [])
+    return NextResponse.json(templates ?? [], {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        Pragma: 'no-cache',
+      },
+    })
   } catch (error) {
     console.error('Error fetching templates:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -251,6 +256,8 @@ async function handleSyncFromMeta() {
     let updated = 0
     const errors: { name: string; language: string; message: string }[] = []
 
+    console.log(`[templates/sync] Starting sync for user ${userId}. Found ${metaTemplates.length} templates from Meta.`)
+
     for (const t of metaTemplates) {
       const body = (t.components ?? []).find((c) => c.type === 'BODY')
       const header = (t.components ?? []).find((c) => c.type === 'HEADER')
@@ -278,6 +285,7 @@ async function handleSyncFromMeta() {
         .maybeSingle()
 
       if (findError) {
+        console.error(`[templates/sync] Find error for ${t.name} (${t.language}):`, findError.message)
         errors.push({
           name: t.name,
           language: t.language,
@@ -287,18 +295,22 @@ async function handleSyncFromMeta() {
       }
 
       if (existing?.id) {
-        const { error: updateError } = await supabase
+        const { data: updatedRow, error: updateError } = await supabase
           .from('message_templates')
           .update(row)
           .eq('id', existing.id)
+          .select('id, body_text, status')
+          .single()
 
         if (updateError) {
+          console.error(`[templates/sync] Update error for ${t.name} (${t.language}):`, updateError.message)
           errors.push({
             name: t.name,
             language: t.language,
             message: updateError.message,
           })
         } else {
+          console.log(`[templates/sync] Updated ${t.name} (${t.language}): body_text=${updatedRow?.body_text?.substring(0, 50)}... status=${updatedRow?.status}`)
           updated++
         }
       } else {
@@ -309,6 +321,7 @@ async function handleSyncFromMeta() {
           .single()
 
         if (insertError) {
+          console.error(`[templates/sync] Insert error for ${t.name} (${t.language}):`, insertError.message)
           errors.push({
             name: t.name,
             language: t.language,
@@ -319,6 +332,8 @@ async function handleSyncFromMeta() {
         }
       }
     }
+
+    console.log(`[templates/sync] Sync complete: ${inserted} inserted, ${updated} updated, ${errors.length} errors out of ${metaTemplates.length} total`)
 
     return NextResponse.json({
       success: errors.length === 0,
