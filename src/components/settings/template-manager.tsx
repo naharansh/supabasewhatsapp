@@ -115,7 +115,7 @@ export function TemplateManager() {
     try {
       setLoading(true);
 
-      const res = await fetch('/api/whatsapp/templates', { method: 'GET' });
+      const res = await fetch(`/api/whatsapp/templates?t=${Date.now()}`, { method: 'GET', cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to fetch templates');
       const data = await res.json();
       setTemplates(data || []);
