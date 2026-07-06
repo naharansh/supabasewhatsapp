@@ -617,3 +617,48 @@ END $$;
 
 DROP INDEX IF EXISTS idx_profiles_subscription_id;
 CREATE INDEX idx_profiles_subscription_id ON public.profiles(subscription_id);
+
+-- ============================================================
+-- Fix: deals FKs that block contact/pipeline deletion
+--
+-- deals.conversation_id had NO ACTION (default), so deleting a
+-- contact → CASCADE-deletes conversations → blocked by deals.
+-- deals.stage_id had NO ACTION, so deleting a pipeline →
+-- CASCADE-deletes stages → blocked by deals.
+--
+-- Both changed to ON DELETE SET NULL (deal survives, link nulled).
+-- ============================================================
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'deals_conversation_id_fkey'
+      AND conrelid = 'deals'::regclass
+  ) THEN
+    ALTER TABLE deals
+      DROP CONSTRAINT deals_conversation_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE deals
+  ADD CONSTRAINT deals_conversation_id_fkey
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    ON DELETE SET NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'deals_stage_id_fkey'
+      AND conrelid = 'deals'::regclass
+  ) THEN
+    ALTER TABLE deals
+      DROP CONSTRAINT deals_stage_id_fkey;
+  END IF;
+END $$;
+
+ALTER TABLE deals
+  ADD CONSTRAINT deals_stage_id_fkey
+    FOREIGN KEY (stage_id) REFERENCES pipeline_stages(id)
+    ON DELETE SET NULL;
