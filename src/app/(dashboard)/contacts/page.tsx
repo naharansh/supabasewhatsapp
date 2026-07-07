@@ -46,7 +46,7 @@ import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
