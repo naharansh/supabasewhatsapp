@@ -63,6 +63,7 @@ export function Step4ScheduleSend({
               table: 'contacts',
               count: true,
               head: true,
+              skipUserFilter: true,
             }),
           });
           if (res.ok) {

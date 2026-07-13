@@ -236,6 +236,7 @@ export function Step2SelectAudience({
             table: 'contacts',
             count: true,
             head: true,
+            skipUserFilter: true,
           }),
         });
         if (reqId !== requestIdRef.current) return;

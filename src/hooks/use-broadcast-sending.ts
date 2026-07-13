@@ -209,6 +209,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             table: 'contacts',
             limit: PAGE,
             offset: page * PAGE,
+            skipUserFilter: true,
           }),
         });
         if (!res.ok) {
@@ -332,6 +333,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         action: 'select',
         table: 'contacts',
         filters: [{ column: 'phone', operator: 'in', value: phones }],
+        skipUserFilter: true,
       }),
     });
     if (!lookupRes.ok) throw new Error('Failed to look up CSV contacts');
