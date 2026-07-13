@@ -1,0 +1,11 @@
+-- Fix: Prevent same tag in both include and exclude lists
+-- Component: src/components/broadcasts/step2-select-audience.tsx
+--
+-- Problem: When a tag was selected in both the "Select Tags" (inclusion)
+-- and "Exclude contacts with these tags" (exclusion) lists, all matched
+-- contacts were excluded, resulting in 0 estimated recipients.
+--
+-- Fix: toggleTag() and toggleExcludeTag() now auto-remove a tag from the
+-- opposite list when it is toggled ON, preventing the contradictory state.
+--
+-- No database migration required — this is a client-side UI fix only.
