@@ -241,6 +241,51 @@ export function Step2SelectAudience({
 
       if (reqId !== requestIdRef.current) return;
 
+      // Verify contact_ids against the user-scoped contacts table.
+      // contact_tags / contact_custom_values are NOT user-scoped, so
+      // they may contain IDs belonging to other users.
+      if (baseIds && baseIds.size > 0) {
+        const idArray = [...baseIds];
+        const verifyRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            select: 'id',
+            filters: [{ column: 'id', operator: 'in', value: idArray }],
+          }),
+        });
+        if (reqId !== requestIdRef.current) return;
+        if (verifyRes.ok) {
+          const verifyJson = await verifyRes.json();
+          baseIds = new Set(
+            (verifyJson.data ?? []).map((c: { id: string }) => c.id),
+          );
+        }
+      }
+
+      if (excludeSet && excludeSet.size > 0) {
+        const exArray = [...excludeSet];
+        const verifyExRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            select: 'id',
+            filters: [{ column: 'id', operator: 'in', value: exArray }],
+          }),
+        });
+        if (reqId !== requestIdRef.current) return;
+        if (verifyExRes.ok) {
+          const verifyExJson = await verifyExRes.json();
+          excludeSet = new Set(
+            (verifyExJson.data ?? []).map((c: { id: string }) => c.id),
+          );
+        }
+      }
+
       if (baseIds) {
         if (excludeSet) {
           const effective = [...baseIds].filter(
