@@ -57,8 +57,8 @@ export async function POST(request: Request) {
 
     switch (action) {
       case 'select': {
-        const { select: columns = '*', filters = [], order, limit, offset, single, count, or: orFilter } = body
-        query = supabase.from(table).select(columns, count ? { count: 'exact' } : undefined)
+        const { select: columns = '*', filters = [], order, limit, offset, single, count, head, or: orFilter } = body
+        query = supabase.from(table).select(columns, count ? { count: 'exact', head: !!head } : undefined)
 
         if (TABLES_WITH_USER_ID.includes(table)) {
           query = query.eq('user_id', userId)

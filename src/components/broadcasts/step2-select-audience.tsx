@@ -146,59 +146,140 @@ export function Step2SelectAudience({
     fetchFields();
   }, [audience.type]);
 
+  async function fetchTagContactIds(tagIds: string[]): Promise<Set<string>> {
+    const allIds: string[] = [];
+    let page = 0;
+    const PAGE = 5000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contact_tags',
+          select: 'contact_id',
+          filters: [{ column: 'tag_id', operator: 'in', value: tagIds }],
+          limit: PAGE,
+          offset: page * PAGE,
+        }),
+      });
+      if (!res.ok) {
+        console.error('Failed to fetch contact_tags:', res.status);
+        break;
+      }
+      const json = await res.json();
+      const batch = json.data ?? [];
+      allIds.push(...batch.map((r: { contact_id: string }) => r.contact_id));
+      if (batch.length < PAGE) break;
+      page++;
+    }
+    return new Set(allIds);
+  }
+
+  async function verifyContactIds(ids: Set<string>): Promise<Set<string>> {
+    if (ids.size === 0) return ids;
+    const idArray = [...ids];
+    const verifiedIds: string[] = [];
+    let vPage = 0;
+    const V_PAGE = 5000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const start = vPage * V_PAGE;
+      const slice = idArray.slice(start, start + V_PAGE);
+      if (slice.length === 0) break;
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'contacts',
+          select: 'id',
+          filters: [{ column: 'id', operator: 'in', value: slice }],
+        }),
+      });
+      if (!res.ok) break;
+      const json = await res.json();
+      const batch = json.data ?? [];
+      verifiedIds.push(...batch.map((c: { id: string }) => c.id));
+      if (batch.length < V_PAGE) break;
+      vPage++;
+    }
+    return new Set(verifiedIds);
+  }
+
   const fetchEstimatedCount = useCallback(async () => {
     const reqId = ++requestIdRef.current;
     setLoadingCount(true);
     try {
-      let baseIds: Set<string> | null = null;
-      let isFilteredQuery = false;
+      const hasExcludeTags =
+        audience.excludeTagIds && audience.excludeTagIds.length > 0;
 
+      // CSV: just use the parsed row count
+      if (
+        audience.type === 'csv' &&
+        audience.csvContacts &&
+        audience.csvContacts.length > 0
+      ) {
+        setEstimatedCount(audience.csvContacts.length);
+        return;
+      }
+
+      // "All Contacts": use count endpoint (no need to fetch rows)
       if (audience.type === 'all') {
-        // baseIds stays null → counted via contacts table below.
-      } else if (
+        const res = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'contacts',
+            count: true,
+            head: true,
+          }),
+        });
+        if (reqId !== requestIdRef.current) return;
+        if (res.ok) {
+          const json = await res.json();
+          const total = json.count ?? 0;
+          if (hasExcludeTags) {
+            const exIds = await fetchTagContactIds(audience.excludeTagIds!);
+            const verifiedEx = await verifyContactIds(exIds);
+            setEstimatedCount(Math.max(0, total - verifiedEx.size));
+          } else {
+            setEstimatedCount(total);
+          }
+        } else {
+          console.error('Failed to count contacts:', res.status);
+          setEstimatedCount(0);
+        }
+        return;
+      }
+
+      // Tag-based filter
+      if (
         audience.type === 'tags' &&
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
-        isFilteredQuery = true;
-        {
-          const allIds: string[] = [];
-          let page = 0;
-          const PAGE = 5000;
-          // eslint-disable-next-line no-constant-condition
-          while (true) {
-            const res = await fetch('/api/data', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'select',
-                table: 'contact_tags',
-                select: 'contact_id',
-                filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
-                limit: PAGE,
-                offset: page * PAGE,
-              }),
-            });
-            if (reqId !== requestIdRef.current) return;
-            if (res.ok) {
-              const json = await res.json();
-              const batch = json.data ?? [];
-              allIds.push(...batch.map((r: { contact_id: string }) => r.contact_id));
-              if (batch.length < PAGE) break;
-              page++;
-            } else {
-              console.error('Failed to fetch contact_tags count:', res.status);
-              break;
-            }
-          }
-          baseIds = new Set(allIds);
+        const baseIds = await fetchTagContactIds(audience.tagIds);
+        const verifiedBase = await verifyContactIds(baseIds);
+        if (hasExcludeTags) {
+          const exIds = await fetchTagContactIds(audience.excludeTagIds!);
+          const verifiedEx = await verifyContactIds(exIds);
+          const effective = [...verifiedBase].filter((id) => !verifiedEx.has(id));
+          setEstimatedCount(effective.length);
+        } else {
+          setEstimatedCount(verifiedBase.size);
         }
-      } else if (
+        return;
+      }
+
+      // Custom field filter
+      if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
-        isFilteredQuery = true;
         const { fieldId, operator, value } = audience.customField;
         const op = operator === 'contains' ? 'ilike' : operator === 'is_not' ? 'neq' : 'eq';
         const val = operator === 'contains' ? `%${value}%` : value;
@@ -218,157 +299,29 @@ export function Step2SelectAudience({
         if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
-          baseIds = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
-        }
-      } else if (
-        audience.type === 'csv' &&
-        audience.csvContacts &&
-        audience.csvContacts.length > 0
-      ) {
-        if (reqId !== requestIdRef.current) return;
-        setEstimatedCount(audience.csvContacts.length);
-        return;
-      } else {
-        if (reqId !== requestIdRef.current) return;
-        setEstimatedCount(null);
-        return;
-      }
-
-      // Apply exclude tags
-      let excludeSet: Set<string> | null = null;
-      if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const allExIds: string[] = [];
-        let exPage = 0;
-        const EX_PAGE = 5000;
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const res = await fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'select',
-              table: 'contact_tags',
-              select: 'contact_id',
-              filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
-              limit: EX_PAGE,
-              offset: exPage * EX_PAGE,
-            }),
-          });
-          if (reqId !== requestIdRef.current) return;
-          if (res.ok) {
-            const json = await res.json();
-            const batch = json.data ?? [];
-            allExIds.push(...batch.map((r: { contact_id: string }) => r.contact_id));
-            if (batch.length < EX_PAGE) break;
-            exPage++;
-          } else {
-            break;
-          }
-        }
-        excludeSet = new Set(allExIds);
-      }
-
-      if (reqId !== requestIdRef.current) return;
-
-      // Verify contact_ids against the user-scoped contacts table.
-      // contact_tags / contact_custom_values are NOT user-scoped, so
-      // they may contain IDs belonging to other users.
-      if (baseIds && baseIds.size > 0) {
-        const idArray = [...baseIds];
-        const verifiedIds: string[] = [];
-        let vPage = 0;
-        const V_PAGE = 5000;
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const start = vPage * V_PAGE;
-          const slice = idArray.slice(start, start + V_PAGE);
-          if (slice.length === 0) break;
-          const verifyRes = await fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'select',
-              table: 'contacts',
-              select: 'id',
-              filters: [{ column: 'id', operator: 'in', value: slice }],
-            }),
-          });
-          if (reqId !== requestIdRef.current) return;
-          if (verifyRes.ok) {
-            const verifyJson = await verifyRes.json();
-            const batch = verifyJson.data ?? [];
-            verifiedIds.push(...batch.map((c: { id: string }) => c.id));
-            if (batch.length < V_PAGE) break;
-            vPage++;
-          } else {
-            break;
-          }
-        }
-        baseIds = new Set(verifiedIds);
-      }
-
-      if (excludeSet && excludeSet.size > 0) {
-        const exArray = [...excludeSet];
-        const verifiedExIds: string[] = [];
-        let vePage = 0;
-        const VE_PAGE = 5000;
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const start = vePage * VE_PAGE;
-          const slice = exArray.slice(start, start + VE_PAGE);
-          if (slice.length === 0) break;
-          const verifyExRes = await fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'select',
-              table: 'contacts',
-              select: 'id',
-              filters: [{ column: 'id', operator: 'in', value: slice }],
-            }),
-          });
-          if (reqId !== requestIdRef.current) return;
-          if (verifyExRes.ok) {
-            const verifyExJson = await verifyExRes.json();
-            const batch = verifyExJson.data ?? [];
-            verifiedExIds.push(...batch.map((c: { id: string }) => c.id));
-            if (batch.length < VE_PAGE) break;
-            vePage++;
-          } else {
-            break;
-          }
-        }
-        excludeSet = new Set(verifiedExIds);
-      }
-
-      if (baseIds) {
-        if (excludeSet) {
-          const effective = [...baseIds].filter(
-            (id) => !excludeSet!.has(id),
+          const baseIds = new Set<string>(
+            (json.data ?? []).map((r: { contact_id: string }) => r.contact_id),
           );
-          setEstimatedCount(effective.length);
+          const verifiedBase = await verifyContactIds(baseIds);
+          if (hasExcludeTags) {
+            const exIds = await fetchTagContactIds(audience.excludeTagIds!);
+            const verifiedEx = await verifyContactIds(exIds);
+            const effective = [...verifiedBase].filter(
+              (id) => !verifiedEx.has(id),
+            );
+            setEstimatedCount(effective.length);
+          } else {
+            setEstimatedCount(verifiedBase.size);
+          }
         } else {
-          setEstimatedCount(baseIds.size);
+          console.error('Failed to count custom field matches:', res.status);
+          setEstimatedCount(0);
         }
-      } else if (!isFilteredQuery) {
-        const res = await fetch('/api/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'select',
-            table: 'contacts',
-            count: true,
-          }),
-        });
-        if (reqId !== requestIdRef.current) return;
-        if (res.ok) {
-          const json = await res.json();
-          const total = json.count ?? 0;
-          setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
-        }
-      } else {
-        setEstimatedCount(0);
+        return;
       }
+
+      // No valid selection yet
+      setEstimatedCount(null);
     } finally {
       if (reqId === requestIdRef.current) setLoadingCount(false);
     }

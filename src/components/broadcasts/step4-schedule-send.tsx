@@ -19,6 +19,8 @@ interface AudienceConfig {
   type: string;
   tagIds?: string[];
   csvContacts?: { phone: string; name?: string }[];
+  excludeTagIds?: string[];
+  customField?: { fieldId: string; operator: string; value: string };
 }
 
 interface Step4Props {
@@ -60,11 +62,30 @@ export function Step4ScheduleSend({
               action: 'select',
               table: 'contacts',
               count: true,
+              head: true,
             }),
           });
           if (res.ok) {
             const json = await res.json();
-            setEstimatedReach(json.count ?? 0);
+            let total = json.count ?? 0;
+            if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
+              const exRes = await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'select',
+                  table: 'contact_tags',
+                  select: 'contact_id',
+                  filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
+                }),
+              });
+              if (exRes.ok) {
+                const exJson = await exRes.json();
+                const exIds = new Set((exJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+                total = Math.max(0, total - exIds.size);
+              }
+            }
+            setEstimatedReach(total);
           }
         } else if (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) {
           const allContactIds: string[] = [];
@@ -94,7 +115,58 @@ export function Step4ScheduleSend({
               break;
             }
           }
-          const uniqueIds = new Set(allContactIds);
+          let uniqueIds = new Set(allContactIds);
+          if (uniqueIds.size > 0) {
+            const idArray = [...uniqueIds];
+            const verifiedIds: string[] = [];
+            let vPage = 0;
+            const V_PAGE = 5000;
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+              const start = vPage * V_PAGE;
+              const slice = idArray.slice(start, start + V_PAGE);
+              if (slice.length === 0) break;
+              const verifyRes = await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'select',
+                  table: 'contacts',
+                  select: 'id',
+                  filters: [{ column: 'id', operator: 'in', value: slice }],
+                }),
+              });
+              if (verifyRes.ok) {
+                const verifyJson = await verifyRes.json();
+                const batch = verifyJson.data ?? [];
+                verifiedIds.push(...batch.map((c: { id: string }) => c.id));
+                if (batch.length < V_PAGE) break;
+                vPage++;
+              } else {
+                break;
+              }
+            }
+            uniqueIds = new Set(verifiedIds);
+          }
+          if (audience.excludeTagIds && audience.excludeTagIds.length > 0 && uniqueIds.size > 0) {
+            const exRes = await fetch('/api/data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'select',
+                table: 'contact_tags',
+                select: 'contact_id',
+                filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
+              }),
+            });
+            if (exRes.ok) {
+              const exJson = await exRes.json();
+              const exIds = new Set((exJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+              const effective = [...uniqueIds].filter((id) => !exIds.has(id));
+              setEstimatedReach(effective.length);
+              return;
+            }
+          }
           setEstimatedReach(uniqueIds.size);
         } else if (audience.type === 'csv' && audience.csvContacts) {
           setEstimatedReach(audience.csvContacts.length);
