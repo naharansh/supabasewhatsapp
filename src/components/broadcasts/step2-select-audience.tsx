@@ -92,6 +92,7 @@ export function Step2SelectAudience({
   const [csvFileName, setCsvFileName] = useState('');
   const [isParsing, setIsParsing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const requestIdRef = useRef(0);
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -146,18 +147,20 @@ export function Step2SelectAudience({
   }, [audience.type]);
 
   const fetchEstimatedCount = useCallback(async () => {
+    const reqId = ++requestIdRef.current;
     setLoadingCount(true);
     try {
-      // Base query — produces the superset before exclude is applied.
-      let baseIds: Set<string> | null = null; // null means "all contacts"
+      let baseIds: Set<string> | null = null;
+      let isFilteredQuery = false;
 
       if (audience.type === 'all') {
-        // Handled below — full-table count adjusted by excludes.
+        // baseIds stays null → counted via contacts table below.
       } else if (
         audience.type === 'tags' &&
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
+        isFilteredQuery = true;
         const res = await fetch('/api/data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -168,15 +171,19 @@ export function Step2SelectAudience({
             filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
           }),
         });
+        if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
           baseIds = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
+        } else {
+          console.error('Failed to fetch contact_tags count:', res.status);
         }
       } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
+        isFilteredQuery = true;
         const { fieldId, operator, value } = audience.customField;
         const op = operator === 'contains' ? 'ilike' : operator === 'is_not' ? 'neq' : 'eq';
         const val = operator === 'contains' ? `%${value}%` : value;
@@ -193,6 +200,7 @@ export function Step2SelectAudience({
             ],
           }),
         });
+        if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
           baseIds = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
@@ -202,9 +210,11 @@ export function Step2SelectAudience({
         audience.csvContacts &&
         audience.csvContacts.length > 0
       ) {
+        if (reqId !== requestIdRef.current) return;
         setEstimatedCount(audience.csvContacts.length);
         return;
       } else {
+        if (reqId !== requestIdRef.current) return;
         setEstimatedCount(null);
         return;
       }
@@ -222,18 +232,25 @@ export function Step2SelectAudience({
             filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
           }),
         });
+        if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
           excludeSet = new Set((json.data ?? []).map((r: { contact_id: string }) => r.contact_id));
         }
       }
 
+      if (reqId !== requestIdRef.current) return;
+
       if (baseIds) {
-        const effective = [...baseIds].filter(
-          (id) => !excludeSet?.has(id),
-        );
-        setEstimatedCount(effective.length);
-      } else {
+        if (excludeSet) {
+          const effective = [...baseIds].filter(
+            (id) => !excludeSet!.has(id),
+          );
+          setEstimatedCount(effective.length);
+        } else {
+          setEstimatedCount(baseIds.size);
+        }
+      } else if (!isFilteredQuery) {
         const res = await fetch('/api/data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -243,14 +260,17 @@ export function Step2SelectAudience({
             count: true,
           }),
         });
+        if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
           const total = json.count ?? 0;
           setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
         }
+      } else {
+        setEstimatedCount(0);
       }
     } finally {
-      setLoadingCount(false);
+      if (reqId === requestIdRef.current) setLoadingCount(false);
     }
   }, [
     audience.type,
