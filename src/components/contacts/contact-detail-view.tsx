@@ -287,9 +287,10 @@ export function ContactDetailView({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'insert',
+          action: 'upsert',
           table: 'contact_tags',
           values: { contact_id: contactId, tag_id: tagId },
+          onConflict: 'contact_id,tag_id',
         }),
       });
       const json = await res.json();

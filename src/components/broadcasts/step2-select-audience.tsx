@@ -146,35 +146,27 @@ export function Step2SelectAudience({
     fetchFields();
   }, [audience.type]);
 
-  async function fetchTagContactIds(tagIds: string[]): Promise<Set<string>> {
-    const allIds: string[] = [];
-    let page = 0;
-    const PAGE = 5000;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const res = await fetch('/api/data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'select',
-          table: 'contact_tags',
-          select: 'contact_id',
-          filters: [{ column: 'tag_id', operator: 'in', value: tagIds }],
-          limit: PAGE,
-          offset: page * PAGE,
-        }),
-      });
-      if (!res.ok) {
-        console.error('Failed to fetch contact_tags:', res.status);
-        break;
-      }
-      const json = await res.json();
-      const batch = json.data ?? [];
-      allIds.push(...batch.map((r: { contact_id: string }) => r.contact_id).filter(Boolean));
-      if (batch.length < PAGE) break;
-      page++;
+  async function fetchTagContacts(
+    tagIds: string[],
+    excludeTagIds?: string[],
+  ): Promise<{ ids: Set<string>; count: number }> {
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select_tag_contacts',
+        table: 'contact_tags',
+        tagIds,
+        excludeTagIds: excludeTagIds ?? [],
+      }),
+    });
+    if (!res.ok) {
+      console.error('Failed to fetch tag contacts:', res.status);
+      return { ids: new Set(), count: 0 };
     }
-    return new Set(allIds);
+    const json = await res.json();
+    const ids: string[] = json.data ?? [];
+    return { ids: new Set(ids), count: ids.length };
   }
 
   async function verifyContactIds(ids: Set<string>): Promise<Set<string>> {
@@ -182,8 +174,7 @@ export function Step2SelectAudience({
     const idArray = [...ids];
     const verifiedIds: string[] = [];
     let vPage = 0;
-    const V_PAGE = 5000;
-    // eslint-disable-next-line no-constant-condition
+    const V_PAGE = 200;
     while (true) {
       const start = vPage * V_PAGE;
       const slice = idArray.slice(start, start + V_PAGE);
@@ -196,14 +187,12 @@ export function Step2SelectAudience({
           table: 'contacts',
           select: 'id',
           filters: [{ column: 'id', operator: 'in', value: slice }],
-          skipUserFilter: true,
         }),
       });
       if (!res.ok) break;
       const json = await res.json();
       const batch = json.data ?? [];
       verifiedIds.push(...batch.map((c: { id: string }) => c.id));
-      if (batch.length < V_PAGE) break;
       vPage++;
     }
     return new Set(verifiedIds);
@@ -216,7 +205,6 @@ export function Step2SelectAudience({
       const hasExcludeTags =
         audience.excludeTagIds && audience.excludeTagIds.length > 0;
 
-      // CSV: just use the parsed row count
       if (
         audience.type === 'csv' &&
         audience.csvContacts &&
@@ -226,7 +214,6 @@ export function Step2SelectAudience({
         return;
       }
 
-      // "All Contacts": use count endpoint (no need to fetch rows)
       if (audience.type === 'all') {
         const res = await fetch('/api/data', {
           method: 'POST',
@@ -236,7 +223,6 @@ export function Step2SelectAudience({
             table: 'contacts',
             count: true,
             head: true,
-            skipUserFilter: true,
           }),
         });
         if (reqId !== requestIdRef.current) return;
@@ -244,9 +230,9 @@ export function Step2SelectAudience({
           const json = await res.json();
           const total = json.count ?? 0;
           if (hasExcludeTags) {
-            const exIds = await fetchTagContactIds(audience.excludeTagIds!);
-            const verifiedEx = await verifyContactIds(exIds);
-            setEstimatedCount(Math.max(0, total - verifiedEx.size));
+            const { count: exCount } = await fetchTagContacts(audience.excludeTagIds!);
+            if (reqId !== requestIdRef.current) return;
+            setEstimatedCount(Math.max(0, total - exCount));
           } else {
             setEstimatedCount(total);
           }
@@ -257,22 +243,17 @@ export function Step2SelectAudience({
         return;
       }
 
-      // Tag-based filter
       if (
         audience.type === 'tags' &&
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
-        const baseIds = await fetchTagContactIds(audience.tagIds);
-        const verifiedBase = await verifyContactIds(baseIds);
-        if (hasExcludeTags) {
-          const exIds = await fetchTagContactIds(audience.excludeTagIds!);
-          const verifiedEx = await verifyContactIds(exIds);
-          const effective = [...verifiedBase].filter((id) => !verifiedEx.has(id));
-          setEstimatedCount(effective.length);
-        } else {
-          setEstimatedCount(verifiedBase.size);
-        }
+        const { count } = await fetchTagContacts(
+          audience.tagIds,
+          audience.excludeTagIds,
+        );
+        if (reqId !== requestIdRef.current) return;
+        setEstimatedCount(count);
         return;
       }
 
@@ -301,19 +282,17 @@ export function Step2SelectAudience({
         if (reqId !== requestIdRef.current) return;
         if (res.ok) {
           const json = await res.json();
-          const baseIds = new Set<string>(
-            (json.data ?? []).map((r: { contact_id: string }) => r.contact_id),
-          );
-          const verifiedBase = await verifyContactIds(baseIds);
+          const baseContactIds = (json.data ?? []).map((r: { contact_id: string }) => r.contact_id).filter(Boolean);
+          const baseVerified = await verifyContactIds(new Set(baseContactIds));
           if (hasExcludeTags) {
-            const exIds = await fetchTagContactIds(audience.excludeTagIds!);
-            const verifiedEx = await verifyContactIds(exIds);
-            const effective = [...verifiedBase].filter(
-              (id) => !verifiedEx.has(id),
+            const { ids: exIds } = await fetchTagContacts(audience.excludeTagIds!);
+            if (reqId !== requestIdRef.current) return;
+            const effective = [...baseVerified].filter(
+              (id) => !exIds.has(id),
             );
             setEstimatedCount(effective.length);
           } else {
-            setEstimatedCount(verifiedBase.size);
+            setEstimatedCount(baseVerified.size);
           }
         } else {
           console.error('Failed to count custom field matches:', res.status);

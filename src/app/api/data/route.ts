@@ -198,6 +198,71 @@ export async function POST(request: Request) {
         return NextResponse.json({ data })
       }
 
+      case 'select_tag_contacts': {
+        const { tagIds = [], excludeTagIds = [] } = body
+        if (!Array.isArray(tagIds) || tagIds.length === 0) {
+          return NextResponse.json({ data: [], count: 0 })
+        }
+
+        // Supabase PostgREST caps at 1000 rows by default, so paginate
+        // all contact_tags queries to fetch the full result set.
+        const CT_PAGE = 1000
+
+        // Paginated fetch for contact_tags rows
+        async function fetchTagContactIds(ids: string[]): Promise<Set<string>> {
+          const result = new Set<string>()
+          let page = 0
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const { data: batch, error } = await supabase
+              .from('contact_tags')
+              .select('contact_id')
+              .in('tag_id', ids)
+              .range(page * CT_PAGE, page * CT_PAGE + CT_PAGE - 1)
+            if (error) throw error
+            if (!batch || batch.length === 0) break
+            for (const r of batch) {
+              if (r.contact_id) result.add(r.contact_id)
+            }
+            if (batch.length < CT_PAGE) break
+            page++
+          }
+          return result
+        }
+
+        const allIds = await fetchTagContactIds(tagIds)
+        if (allIds.size === 0) {
+          return NextResponse.json({ data: [], count: 0 })
+        }
+
+        // Fetch all user's contact IDs once, then intersect
+        const userContactIds = new Set<string>()
+        let cPage = 0
+        const C_PAGE = 1000
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { data: batch } = await supabase
+            .from('contacts')
+            .select('id')
+            .eq('user_id', userId)
+            .range(cPage * C_PAGE, cPage * C_PAGE + C_PAGE - 1)
+          if (!batch || batch.length === 0) break
+          for (const r of batch) userContactIds.add(r.id)
+          if (batch.length < C_PAGE) break
+          cPage++
+        }
+
+        const verifiedIds = [...allIds].filter((id) => userContactIds.has(id))
+        let resultSet = new Set(verifiedIds)
+
+        if (Array.isArray(excludeTagIds) && excludeTagIds.length > 0 && resultSet.size > 0) {
+          const exIds = await fetchTagContactIds(excludeTagIds)
+          resultSet = new Set([...resultSet].filter((id) => !exIds.has(id)))
+        }
+
+        return NextResponse.json({ data: [...resultSet], count: resultSet.size })
+      }
+
       default:
         return NextResponse.json({ error: `Unknown action: '${action}'` }, { status: 400 })
     }

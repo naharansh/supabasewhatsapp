@@ -50,6 +50,25 @@ export function Step4ScheduleSend({
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
 
+  async function fetchTagContacts(
+    tagIds: string[],
+    excludeTagIds?: string[],
+  ): Promise<number> {
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'select_tag_contacts',
+        table: 'contact_tags',
+        tagIds,
+        excludeTagIds: excludeTagIds ?? [],
+      }),
+    });
+    if (!res.ok) return 0;
+    const json = await res.json();
+    return json.count ?? 0;
+  }
+
   useEffect(() => {
     async function calculateReach() {
       setLoadingReach(true);
@@ -63,113 +82,20 @@ export function Step4ScheduleSend({
               table: 'contacts',
               count: true,
               head: true,
-              skipUserFilter: true,
             }),
           });
           if (res.ok) {
             const json = await res.json();
             let total = json.count ?? 0;
             if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-              const exRes = await fetch('/api/data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'select',
-                  table: 'contact_tags',
-                  select: 'contact_id',
-                  filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
-                }),
-              });
-              if (exRes.ok) {
-                const exJson = await exRes.json();
-                const exIds = new Set((exJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
-                total = Math.max(0, total - exIds.size);
-              }
+              const exCount = await fetchTagContacts(audience.excludeTagIds);
+              total = Math.max(0, total - exCount);
             }
             setEstimatedReach(total);
           }
         } else if (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) {
-          const allContactIds: string[] = [];
-          let page = 0;
-          const PAGE = 5000;
-          // eslint-disable-next-line no-constant-condition
-          while (true) {
-            const res = await fetch('/api/data', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'select',
-                table: 'contact_tags',
-                select: 'contact_id',
-                filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
-                limit: PAGE,
-                offset: page * PAGE,
-              }),
-            });
-            if (res.ok) {
-              const json = await res.json();
-              const batch = json.data ?? [];
-              allContactIds.push(...batch.map((ct: { contact_id: string }) => ct.contact_id));
-              if (batch.length < PAGE) break;
-              page++;
-            } else {
-              break;
-            }
-          }
-          let uniqueIds = new Set(allContactIds);
-          if (uniqueIds.size > 0) {
-            const idArray = [...uniqueIds];
-            const verifiedIds: string[] = [];
-            let vPage = 0;
-            const V_PAGE = 5000;
-            // eslint-disable-next-line no-constant-condition
-            while (true) {
-              const start = vPage * V_PAGE;
-              const slice = idArray.slice(start, start + V_PAGE);
-              if (slice.length === 0) break;
-              const verifyRes = await fetch('/api/data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'select',
-                  table: 'contacts',
-                  select: 'id',
-                  filters: [{ column: 'id', operator: 'in', value: slice }],
-                  skipUserFilter: true,
-                }),
-              });
-              if (verifyRes.ok) {
-                const verifyJson = await verifyRes.json();
-                const batch = verifyJson.data ?? [];
-                verifiedIds.push(...batch.map((c: { id: string }) => c.id));
-                if (batch.length < V_PAGE) break;
-                vPage++;
-              } else {
-                break;
-              }
-            }
-            uniqueIds = new Set(verifiedIds);
-          }
-          if (audience.excludeTagIds && audience.excludeTagIds.length > 0 && uniqueIds.size > 0) {
-            const exRes = await fetch('/api/data', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'select',
-                table: 'contact_tags',
-                select: 'contact_id',
-                filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
-              }),
-            });
-            if (exRes.ok) {
-              const exJson = await exRes.json();
-              const exIds = new Set((exJson.data ?? []).map((r: { contact_id: string }) => r.contact_id));
-              const effective = [...uniqueIds].filter((id) => !exIds.has(id));
-              setEstimatedReach(effective.length);
-              return;
-            }
-          }
-          setEstimatedReach(uniqueIds.size);
+          const count = await fetchTagContacts(audience.tagIds, audience.excludeTagIds);
+          setEstimatedReach(count);
         } else if (audience.type === 'csv' && audience.csvContacts) {
           setEstimatedReach(audience.csvContacts.length);
         } else {

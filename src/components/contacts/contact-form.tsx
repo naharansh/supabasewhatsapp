@@ -154,9 +154,10 @@ export function ContactForm({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              action: 'insert',
+              action: 'upsert',
               table: 'contact_tags',
               values: tagRows,
+              onConflict: 'contact_id,tag_id',
             }),
           });
           const json = await res.json();

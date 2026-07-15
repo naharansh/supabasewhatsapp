@@ -127,6 +127,18 @@ export function TagManager() {
 
     try {
       setDeleting(true);
+
+      // Remove all contact_tags for this tag first (FK may lack CASCADE on prod)
+      await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          table: 'contact_tags',
+          filters: [{ column: 'tag_id', operator: 'eq', value: tagToDelete.id }],
+        }),
+      });
+
       const res = await fetch('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

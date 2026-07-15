@@ -170,7 +170,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
   async function fetchContactsByIds(ids: string[]): Promise<Contact[]> {
     if (ids.length === 0) return [];
-    const PAGE = 500;
+    const PAGE = 50;
     const all: Contact[] = [];
     for (let i = 0; i < ids.length; i += PAGE) {
       const chunk = ids.slice(i, i + PAGE);
@@ -181,7 +181,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           action: 'select',
           table: 'contacts',
           filters: [{ column: 'id', operator: 'in', value: chunk }],
-          skipUserFilter: true,
         }),
       });
       if (!res.ok) {
@@ -209,7 +208,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             table: 'contacts',
             limit: PAGE,
             offset: page * PAGE,
-            skipUserFilter: true,
           }),
         });
         if (!res.ok) {
@@ -227,37 +225,24 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       audience.tagIds &&
       audience.tagIds.length > 0
     ) {
-      const allTagContactIds: string[] = [];
-      let tagPage = 0;
-      const TAG_PAGE = 5000;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const tagRes = await fetch('/api/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'select',
-            table: 'contact_tags',
-            select: 'contact_id',
-            filters: [{ column: 'tag_id', operator: 'in', value: audience.tagIds }],
-            limit: TAG_PAGE,
-            offset: tagPage * TAG_PAGE,
-          }),
-        });
-        if (!tagRes.ok) {
-          const err = await tagRes.json().catch(() => ({}));
-          throw new Error(`Failed to fetch contact tags: ${err.error || tagRes.statusText}`);
-        }
-        const tagJson = await tagRes.json();
-        const batch = tagJson.data ?? [];
-        allTagContactIds.push(...batch.map((ct: { contact_id: string }) => ct.contact_id).filter(Boolean));
-        if (batch.length < TAG_PAGE) break;
-        tagPage++;
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select_tag_contacts',
+          table: 'contact_tags',
+          tagIds: audience.tagIds,
+          excludeTagIds: audience.excludeTagIds ?? [],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(`Failed to fetch tag contacts: ${err.error || res.statusText}`);
       }
-
-      if (allTagContactIds.length > 0) {
-        const uniqueContactIds = [...new Set(allTagContactIds.filter(Boolean))];
-        contacts = await fetchContactsByIds(uniqueContactIds);
+      const json = await res.json();
+      const contactIds: string[] = json.data ?? [];
+      if (contactIds.length > 0) {
+        contacts = await fetchContactsByIds(contactIds);
       }
     } else if (audience.type === 'custom_field' && audience.customField) {
       contacts = await resolveCustomFieldAudience(audience.customField);
@@ -265,36 +250,21 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       contacts = await upsertCsvContacts(audience.csvContacts);
     }
 
-    if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const allExcludedIds: string[] = [];
-      let exPage = 0;
-      const EX_PAGE = 5000;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const excludeRes = await fetch('/api/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'select',
-            table: 'contact_tags',
-            select: 'contact_id',
-            filters: [{ column: 'tag_id', operator: 'in', value: audience.excludeTagIds }],
-            limit: EX_PAGE,
-            offset: exPage * EX_PAGE,
-          }),
-        });
-        if (excludeRes.ok) {
-          const excludeJson = await excludeRes.json();
-          const batch = excludeJson.data ?? [];
-          allExcludedIds.push(...batch.map((r: { contact_id: string }) => r.contact_id));
-          if (batch.length < EX_PAGE) break;
-          exPage++;
-        } else {
-          break;
-        }
+    if (audience.excludeTagIds && audience.excludeTagIds.length > 0 && audience.type !== 'tags') {
+      const exRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select_tag_contacts',
+          table: 'contact_tags',
+          tagIds: audience.excludeTagIds,
+        }),
+      });
+      if (exRes.ok) {
+        const exJson = await exRes.json();
+        const excludedIds = new Set<string>((exJson.data ?? []).filter(Boolean));
+        contacts = contacts.filter((c) => !excludedIds.has(c.id));
       }
-      const excludedIds = new Set(allExcludedIds.filter(Boolean));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
 
     return contacts;
@@ -330,11 +300,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'select',
-        table: 'contacts',
-        filters: [{ column: 'phone', operator: 'in', value: phones }],
-        skipUserFilter: true,
-      }),
+            action: 'select',
+            table: 'contacts',
+            filters: [{ column: 'phone', operator: 'in', value: phones }],
+          }),
     });
     if (!lookupRes.ok) throw new Error('Failed to look up CSV contacts');
     const lookupJson = await lookupRes.json();
@@ -407,11 +376,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'select',
-        table: 'contacts',
-        filters: [{ column: 'id', operator: 'in', value: contactIds }],
-        skipUserFilter: true,
-      }),
+            action: 'select',
+            table: 'contacts',
+            filters: [{ column: 'id', operator: 'in', value: contactIds }],
+          }),
     });
     if (!contactRes.ok) throw new Error('Failed to fetch contacts');
     const contactJson = await contactRes.json();
@@ -512,13 +480,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const recsRes = await fetch('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'select',
-          table: 'broadcast_recipients',
-          select: '*, contact:contacts(*)',
-          filters: [{ column: 'broadcast_id', operator: 'eq', value: broadcast.id }],
-          skipUserFilter: true,
-        }),
+      body: JSON.stringify({
+            action: 'select',
+            table: 'broadcast_recipients',
+            select: '*, contact:contacts(*)',
+            filters: [{ column: 'broadcast_id', operator: 'eq', value: broadcast.id }],
+          }),
       });
       if (!recsRes.ok) throw new Error('Failed to fetch broadcast recipients');
       const recsJson = await recsRes.json();

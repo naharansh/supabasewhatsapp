@@ -218,7 +218,7 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
           await fetch('/api/data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'insert', table: 'contact_tags', values: chunk }),
+            body: JSON.stringify({ action: 'upsert', table: 'contact_tags', values: chunk, onConflict: 'contact_id,tag_id' }),
           });
         }
       }
