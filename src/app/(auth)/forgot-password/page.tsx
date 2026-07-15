@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, ArrowLeft } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -25,10 +26,26 @@ export default function ForgotPasswordPage() {
     setError(null);
     setLoading(true);
 
-    // For now just show success — password reset can be implemented
-    // with a custom email flow or Nodemailer integration.
-    setSuccess(true);
-    setLoading(false);
+    try {
+      const supabase = createClient();
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        email,
+        {
+          redirectTo: `${window.location.origin}/auth/confirm?next=/reset-password`,
+        },
+      );
+
+      if (resetError) {
+        setError(resetError.message);
+        setLoading(false);
+        return;
+      }
+
+      setSuccess(true);
+    } catch {
+      setError("Something went wrong. Please try again.");
+      setLoading(false);
+    }
   };
 
   if (success) {
@@ -43,7 +60,9 @@ export default function ForgotPasswordPage() {
               Check your email
             </CardTitle>
             <CardDescription className="text-slate-400">
-              If an account with that email exists, we've sent a password reset link.
+              If an account with that email exists, we&apos;ve sent a password
+              reset link. Check your inbox and click the link to set a new
+              password.
             </CardDescription>
           </CardHeader>
           <CardContent>
