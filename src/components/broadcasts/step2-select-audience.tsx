@@ -170,7 +170,7 @@ export function Step2SelectAudience({
       }
       const json = await res.json();
       const batch = json.data ?? [];
-      allIds.push(...batch.map((r: { contact_id: string }) => r.contact_id));
+      allIds.push(...batch.map((r: { contact_id: string }) => r.contact_id).filter(Boolean));
       if (batch.length < PAGE) break;
       page++;
     }

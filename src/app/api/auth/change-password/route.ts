@@ -14,32 +14,34 @@ export async function POST(request: Request) {
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-    const usersRes = await fetch(
-      `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
-      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
-    );
-    const usersData = await usersRes.json();
-    const user = usersData?.users?.[0];
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
     const verifyRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", apikey: serviceKey },
+      headers: { "Content-Type": "application/json", apikey: anonKey },
       body: JSON.stringify({ email, password: currentPassword }),
     });
 
-    if (!verifyRes.ok) {
+    const verifyData = await verifyRes.json();
+
+    if (!verifyRes.ok || verifyData.error) {
       return NextResponse.json({ error: "Current password is incorrect" }, { status: 401 });
+    }
+
+    let userId = verifyData.user?.sub;
+    if (!userId && verifyData.access_token) {
+      try {
+        const payload = JSON.parse(Buffer.from(verifyData.access_token.split(".")[1], "base64").toString());
+        userId = payload.sub;
+      } catch {}
+    }
+    if (!userId) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     const admin = createAdminClient();
     const { error: updateError } = await admin.auth.admin.updateUserById(
-      user.id,
+      userId,
       { password: newPassword },
     );
 

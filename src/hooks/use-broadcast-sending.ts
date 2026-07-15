@@ -250,7 +250,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         }
         const tagJson = await tagRes.json();
         const batch = tagJson.data ?? [];
-        allTagContactIds.push(...batch.map((ct: { contact_id: string }) => ct.contact_id));
+        allTagContactIds.push(...batch.map((ct: { contact_id: string }) => ct.contact_id).filter(Boolean));
         if (batch.length < TAG_PAGE) break;
         tagPage++;
       }

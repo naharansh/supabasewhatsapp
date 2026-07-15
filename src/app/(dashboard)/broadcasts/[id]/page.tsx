@@ -33,6 +33,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Trash2,
+  RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -158,6 +159,8 @@ export default function BroadcastDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [resumeProgress, setResumeProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -215,6 +218,7 @@ export default function BroadcastDetailPage() {
   const computedCounts = useMemo(
     () => ({
       total: recipients.length,
+      pending: recipients.filter((r) => r.status === 'pending').length,
       sent: recipients.filter((r) =>
         ['sent', 'delivered', 'read', 'replied'].includes(r.status),
       ).length,
@@ -293,6 +297,74 @@ export default function BroadcastDetailPage() {
     }
   }
 
+  async function handleResume() {
+    setResuming(true);
+    setResumeProgress({ sent: 0, failed: 0, total: computedCounts.pending });
+    try {
+      let totalSent = 0;
+      let totalFailed = 0;
+      const batchSize = 50;
+
+      while (true) {
+        const res = await fetch('/api/whatsapp/broadcast/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ broadcast_id: broadcastId, batch_size: batchSize }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          toast.error(data.error || 'Failed to resume');
+          break;
+        }
+        totalSent += data.sent ?? 0;
+        totalFailed += data.failed ?? 0;
+        setResumeProgress({ sent: totalSent, failed: totalFailed, total: computedCounts.pending });
+        if (!data.remaining || data.remaining === 0) break;
+      }
+      if (totalSent === 0 && totalFailed === 0) {
+        toast.info('Nothing to resume');
+      } else {
+        toast.success(`Resumed: ${totalSent} sent, ${totalFailed} failed`);
+      }
+      const [bcRes, recsRes] = await Promise.all([
+        fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'broadcasts',
+            filters: [{ column: 'id', operator: 'eq', value: broadcastId }],
+            single: true,
+          }),
+        }),
+        fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'broadcast_recipients',
+            select: '*, contact:contacts(*)',
+            filters: [{ column: 'broadcast_id', operator: 'eq', value: broadcastId }],
+            order: { column: 'created_at', ascending: false },
+          }),
+        }),
+      ]);
+      if (bcRes.ok) {
+        const bcJson = await bcRes.json();
+        setBroadcast(bcJson.data);
+      }
+      if (recsRes.ok) {
+        const recsJson = await recsRes.json();
+        setRecipients(recsJson.data ?? []);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to resume');
+    } finally {
+      setResuming(false);
+      setResumeProgress(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -353,6 +425,23 @@ export default function BroadcastDetailPage() {
           </div>
         </div>
 
+        {/* Resume — show when broadcast is stuck in 'sending' with pending recipients */}
+        {broadcast.status === 'sending' && computedCounts.pending > 0 && (
+          <Button
+            size="sm"
+            onClick={handleResume}
+            disabled={resuming}
+            className="bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {resuming ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCw className="h-3.5 w-3.5" />
+            )}
+            {resuming ? 'Resuming…' : `Resume (${computedCounts.pending} pending)`}
+          </Button>
+        )}
+
         {/* Delete — inline-confirm pattern matches the pipeline-settings
             "Delete Pipeline" flow. Mid-send broadcasts can't be deleted
             because orphaning in-flight Meta messages would leave the
@@ -382,7 +471,7 @@ export default function BroadcastDetailPage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={broadcast.status === 'sending'}
+            disabled={broadcast.status === 'sending' || resuming}
             onClick={() => setConfirmDelete(true)}
             title={
               broadcast.status === 'sending'
@@ -396,6 +485,18 @@ export default function BroadcastDetailPage() {
           </Button>
         )}
       </div>
+
+      {/* Resume progress banner */}
+      {resuming && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+          <p className="text-sm text-amber-300">
+            {resumeProgress
+              ? `Sending… ${resumeProgress.sent + resumeProgress.failed} / ${resumeProgress.total} processed (${resumeProgress.sent} sent, ${resumeProgress.failed} failed)`
+              : 'Starting resume…'}
+          </p>
+        </div>
+      )}
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
