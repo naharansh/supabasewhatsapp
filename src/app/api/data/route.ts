@@ -164,10 +164,6 @@ export async function POST(request: Request) {
       case 'delete': {
         const { filters = [] } = body
 
-        // Broadcasts have a cascade + aggregate trigger that can fail
-        // when the trigger tries to UPDATE counts on a row that is being
-        // deleted. Delete recipients first so the trigger fires while
-        // the broadcast row still exists.
         if (table === 'broadcasts') {
           const bcFilter = filters.find((f: { column: string }) => f.column === 'id')
           const bcId = bcFilter?.value
@@ -179,6 +175,8 @@ export async function POST(request: Request) {
             if (recErr) throw recErr
           }
         }
+
+
 
         query = supabase.from(table).delete()
 
@@ -276,6 +274,20 @@ export async function POST(request: Request) {
     // return empty data so UIs degrade gracefully instead of toasting errors.
     if (code === 'PGRST205') {
       return emptyResponse(action)
+    }
+
+    // Foreign key violation — show a clear message without leaking PG internals
+    if (code === '23503') {
+      const details =
+        error && typeof error === 'object' && 'details' in error
+          ? String((error as { details: unknown }).details ?? '')
+          : ''
+      const refMatch = details.match(/still referenced from table "(\w+)"/)
+      const refTable = refMatch ? refMatch[1] : 'another table'
+      console.error('Data API error:', details)
+      return NextResponse.json({
+        error: `Cannot delete this record because it is still referenced from "${refTable}". Remove or reassign related records first.`,
+      }, { status: 409 })
     }
 
     const message = error instanceof Error ? error.message : 'Internal server error'

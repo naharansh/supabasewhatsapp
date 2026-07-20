@@ -175,6 +175,10 @@ export async function POST(request: Request) {
     let failedCount = 0
 
     for (const recipient of pendingRecipients) {
+      if (request.signal.aborted) {
+        console.warn('[broadcast/resume] request aborted by client, stopping')
+        break
+      }
       const contact = recipient.contact
 
       if (!contact?.phone) {

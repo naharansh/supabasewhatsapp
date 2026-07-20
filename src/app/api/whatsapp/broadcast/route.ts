@@ -155,6 +155,10 @@ export async function POST(request: Request) {
     let failedCount = 0
 
     for (const recipient of recipients) {
+      if (request.signal.aborted) {
+        console.warn('[broadcast] request aborted by client, stopping')
+        break
+      }
       const sanitized = sanitizePhoneForMeta(recipient.phone)
 
       if (!isValidE164(sanitized)) {
