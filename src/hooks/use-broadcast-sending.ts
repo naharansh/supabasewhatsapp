@@ -417,6 +417,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             template_name: payload.template.name,
             template_language: payload.template.language ?? 'en_US',
             template_variables: payload.variables,
+            header_content: payload.headerUrl,
             audience_filter: {
               type: payload.audience.type,
               tagIds: payload.audience.tagIds,
@@ -512,7 +513,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                   r.contact,
                   customValueIndex.get(r.contact.id),
                 )
-              : {},
+              : [],
           }));
 
         if (apiRecipients.length === 0) continue;

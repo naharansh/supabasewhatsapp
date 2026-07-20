@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { sendTemplateMessage, type TemplateHeaderParam } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -149,6 +149,21 @@ export async function POST(request: Request) {
     const variables = (broadcast.template_variables ?? {}) as Record<string, VariableMapping>
     const hasVariables = Object.keys(variables).length > 0
 
+    let headerParams: TemplateHeaderParam[] | undefined
+    const { data: templateMeta } = await supabase
+      .from('message_templates')
+      .select('header_type, header_content')
+      .match({ user_id: userId, name: broadcast.template_name, language: broadcast.template_language || 'en_US' })
+      .maybeSingle()
+
+    if (templateMeta?.header_type && ['image', 'video', 'document'].includes(templateMeta.header_type)) {
+      const url = (broadcast as Record<string, unknown>).header_content as string | undefined || templateMeta.header_content
+      if (url) {
+        const headerType = templateMeta.header_type as 'image' | 'video' | 'document'
+        headerParams = [{ type: headerType, [headerType]: { link: url } }] as TemplateHeaderParam[]
+      }
+    }
+
     const customValueIndex: Map<string, Map<string, string>> = new Map()
     if (hasVariables) {
       const contactIds = pendingRecipients
@@ -218,6 +233,7 @@ export async function POST(request: Request) {
             templateName: broadcast.template_name,
             language: broadcast.template_language || 'en_US',
             params,
+            headerParams,
           })
           sentMessageId = result.messageId
           lastError = null
