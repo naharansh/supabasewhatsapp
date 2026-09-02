@@ -16,7 +16,7 @@ export async function GET() {
 
     const { data: config, error } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, waba_id, access_token, status')
+      .select('phone_number_id, waba_id, access_token, status, meta_app_secret')
       .eq('user_id', userId)
       .maybeSingle()
 
@@ -60,7 +60,11 @@ export async function GET() {
       return NextResponse.json({
         connected: true,
         phone_info: phoneInfo,
-        config: { phone_number_id: config.phone_number_id, waba_id: config.waba_id },
+        config: {
+          phone_number_id: config.phone_number_id,
+          waba_id: config.waba_id,
+          has_meta_app_secret: !!config.meta_app_secret,
+        },
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -95,7 +99,7 @@ export async function POST(request: Request) {
     const supabase = createAdminClient()
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token } = body
+    const { phone_number_id, waba_id, access_token, verify_token, meta_app_secret } = body
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -121,9 +125,11 @@ export async function POST(request: Request) {
 
     let encryptedAccessToken: string
     let encryptedVerifyToken: string | null
+    let encryptedMetaAppSecret: string | null
     try {
       encryptedAccessToken = encrypt(access_token)
       encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+      encryptedMetaAppSecret = meta_app_secret ? encrypt(meta_app_secret) : null
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown encryption error'
       console.error('Encryption failed:', message)
@@ -152,6 +158,7 @@ export async function POST(request: Request) {
           waba_id: waba_id || null,
           access_token: encryptedAccessToken,
           verify_token: encryptedVerifyToken,
+          meta_app_secret: encryptedMetaAppSecret,
           status: 'connected',
           connected_at: new Date(),
           updated_at: new Date(),
@@ -168,6 +175,7 @@ export async function POST(request: Request) {
           waba_id: waba_id || null,
           access_token: encryptedAccessToken,
           verify_token: encryptedVerifyToken,
+          meta_app_secret: encryptedMetaAppSecret,
           status: 'connected',
           connected_at: new Date(),
         })

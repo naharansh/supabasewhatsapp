@@ -50,6 +50,9 @@ export function WhatsAppConfig() {
   const [wabaId, setWabaId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
+  const [metaAppSecret, setMetaAppSecret] = useState('');
+  const [metaAppSecretEdited, setMetaAppSecretEdited] = useState(false);
+  const [hasMetaAppSecret, setHasMetaAppSecret] = useState(false);
   const [tokenEdited, setTokenEdited] = useState(false);
 
   const webhookUrl =
@@ -70,6 +73,9 @@ export function WhatsAppConfig() {
         setAccessToken(MASKED_TOKEN);
         setVerifyToken('');
         setTokenEdited(false);
+        setHasMetaAppSecret(!!payload.config.has_meta_app_secret);
+        setMetaAppSecret(payload.config.has_meta_app_secret ? MASKED_TOKEN : '');
+        setMetaAppSecretEdited(false);
       } else {
         setConfig(null);
         setPhoneNumberId('');
@@ -77,6 +83,9 @@ export function WhatsAppConfig() {
         setAccessToken('');
         setVerifyToken('');
         setTokenEdited(false);
+        setHasMetaAppSecret(false);
+        setMetaAppSecret('');
+        setMetaAppSecretEdited(false);
       }
 
       if (payload.connected) {
@@ -138,6 +147,13 @@ export function WhatsAppConfig() {
         toast.error('Please re-enter the Access Token to save changes');
         setSaving(false);
         return;
+      }
+
+      if (metaAppSecretEdited && metaAppSecret !== MASKED_TOKEN && metaAppSecret.trim()) {
+        payload.meta_app_secret = metaAppSecret.trim();
+      } else if (metaAppSecretEdited && metaAppSecret === '') {
+        // User cleared the field — send null to remove the stored secret
+        payload.meta_app_secret = null;
       }
 
       const res = await fetch('/api/whatsapp/config', {
@@ -221,6 +237,9 @@ export function WhatsAppConfig() {
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
+      setMetaAppSecret('');
+      setMetaAppSecretEdited(false);
+      setHasMetaAppSecret(false);
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
@@ -379,6 +398,43 @@ export function WhatsAppConfig() {
               />
               <p className="text-xs text-slate-500">
                 A custom string you create. Must match the token you set in Meta webhook settings.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-slate-300">Meta App Secret</Label>
+              <div className="relative">
+                <Input
+                  type={showToken ? 'text' : 'password'}
+                  placeholder="From Meta → App Settings → Basic → App Secret"
+                  value={metaAppSecret}
+                  onChange={(e) => {
+                    setMetaAppSecret(e.target.value);
+                    setMetaAppSecretEdited(true);
+                  }}
+                  onFocus={() => {
+                    if (metaAppSecret === MASKED_TOKEN) {
+                      setMetaAppSecret('');
+                      setMetaAppSecretEdited(true);
+                    }
+                  }}
+                  className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken(!showToken)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                >
+                  {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+              {hasMetaAppSecret && !metaAppSecretEdited && (
+                <p className="text-xs text-slate-500">
+                  A Meta App Secret is saved. Re-enter to update, or clear the field to remove.
+                </p>
+              )}
+              <p className="text-xs text-slate-500">
+                Required only if your WhatsApp numbers use different Meta Apps. Each Meta App has its own secret for webhook signature verification.
               </p>
             </div>
           </CardContent>

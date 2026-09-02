@@ -5,6 +5,11 @@ import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus } from "@/types";
 import { Search, ChevronDown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import {
+  logDataFetchError,
+  logDataLoad,
+  safeJson,
+} from "@/lib/inbox-console";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -74,27 +79,51 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const endpoint = "/api/data";
+      let res: Response;
+      try {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "conversations",
+            select: "*, contact:contacts(*)",
+            order: { column: "last_message_at", ascending: false },
+          }),
+        });
+      } catch (err) {
+        logDataFetchError(endpoint, null, err, {
           action: "select",
           table: "conversations",
-          select: "*, contact:contacts(*)",
-          order: { column: "last_message_at", ascending: false },
-        }),
-      });
-      const json = await res.json();
+        });
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      const json = await safeJson<{ error?: unknown; data?: Conversation[] }>(
+        res,
+        endpoint,
+        { action: "select", table: "conversations", httpStatus: res.status },
+      );
 
       if (cancelled) return;
 
-      if (json.error) {
-        console.error("Failed to fetch conversations:", json.error);
+      if (!res.ok || json?.error) {
+        logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+          action: "select",
+          table: "conversations",
+        });
         setLoading(false);
         return;
       }
 
-      onConversationsLoadedRef.current(json.data ?? []);
+      const rows = json?.data ?? [];
+      logDataLoad(endpoint, rows.length, {
+        table: "conversations",
+        httpStatus: res.status,
+      });
+      onConversationsLoadedRef.current(rows);
       setLoading(false);
     })();
 

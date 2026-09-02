@@ -12,22 +12,26 @@ import crypto from 'node:crypto'
  *   https://developers.facebook.com/docs/graph-api/webhooks/getting-started#verify-payloads
  *
  * Contract:
- *   `META_APP_SECRET` is **required**. If it's missing we fail closed —
- *   every request is rejected until the operator configures the
- *   secret. A previous version fell open with a warning log, which is
- *   unsafe for a public template: anyone who forgets the env var would
- *   be running a fully spoofable webhook.
+ *   If no per-user `secret` is provided, `META_APP_SECRET` env var is
+ *   used as fallback. If neither is available we fail closed — every
+ *   request is rejected until the operator configures a secret.
+ *
+ * Multi-tenant note:
+ *   Users on different Meta Apps each have their own App Secret. Pass
+ *   the per-user `secret` (decrypted from `whatsapp_config.meta_app_secret`)
+ *   when available so we verify against the correct signing key.
  */
 export function verifyMetaWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
+  secret?: string,
 ): boolean {
-  const secret = process.env.META_APP_SECRET
-  if (!secret) {
+  const appSecret = secret ?? process.env.META_APP_SECRET
+  if (!appSecret) {
     console.error(
-      '[webhook] META_APP_SECRET is not set — rejecting request. ' +
+      '[webhook] META_APP_SECRET is not set and no per-user secret provided — rejecting request. ' +
         'Configure the env var (Meta → App Settings → Basic → App Secret) ' +
-        'to enable signature verification.',
+        'or save your Meta App Secret in Settings → WhatsApp Integration.',
     )
     return false
   }
@@ -37,7 +41,7 @@ export function verifyMetaWebhookSignature(
 
   const expected =
     'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
+    crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')
 
   const a = Buffer.from(signatureHeader)
   const b = Buffer.from(expected)

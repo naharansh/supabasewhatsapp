@@ -11,6 +11,11 @@ import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  logDataFetchError,
+  logDataLoad,
+  safeJson,
+} from "@/lib/inbox-console";
 
 export default function InboxPage() {
   const router = useRouter();
@@ -82,7 +87,8 @@ export default function InboxPage() {
     if (hydratingConvIdsRef.current.has(convId)) return;
     hydratingConvIdsRef.current.add(convId);
     try {
-      const res = await fetch("/api/data", {
+      const endpoint = "/api/data";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -93,13 +99,23 @@ export default function InboxPage() {
           filters: [{ column: "id", operator: "eq", value: convId }],
         }),
       });
-      const json = await res.json();
-      if (json.error) {
-        console.error("Failed to hydrate conversation:", json.error);
+      const json = await safeJson<{ error?: unknown; data?: Conversation }>(
+        res,
+        endpoint,
+        { action: "select", table: "conversations", convId, hydrate: true },
+      );
+      if (!res.ok || json?.error) {
+        logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+          action: "select",
+          table: "conversations",
+          convId,
+          hydrate: true,
+        });
         return;
       }
-      if (!json.data) return;
+      if (!json?.data) return;
       const fetched = json.data as Conversation;
+      logDataLoad(endpoint, 1, { convId, hydrate: true });
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
@@ -120,18 +136,42 @@ export default function InboxPage() {
     if (!user) return;
 
     const checkConnection = async () => {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const endpoint = "/api/data";
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "whatsapp_config",
+            single: true,
+            filters: [{ column: "user_id", operator: "eq", value: user.id }],
+          }),
+        });
+        const json = await safeJson<{ error?: unknown; data?: unknown }>(
+          res,
+          endpoint,
+          { action: "select", table: "whatsapp_config", userId: user.id },
+        );
+        if (!res.ok || json?.error) {
+          logDataFetchError(
+            endpoint,
+            res.status,
+            json?.error ?? res.statusText,
+            { action: "select", table: "whatsapp_config", userId: user.id },
+          );
+          return;
+        }
+        setWhatsappConnected(
+          (json?.data as { status?: string } | null)?.status === "connected",
+        );
+      } catch (err) {
+        logDataFetchError(endpoint, null, err, {
           action: "select",
           table: "whatsapp_config",
-          single: true,
-          filters: [{ column: "user_id", operator: "eq", value: user.id }],
-        }),
-      });
-      const json = await res.json();
-      setWhatsappConnected(json.data?.status === "connected");
+          userId: user.id,
+        });
+      }
     };
 
     checkConnection();

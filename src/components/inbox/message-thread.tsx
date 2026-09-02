@@ -35,6 +35,11 @@ import { MessageComposer } from "./message-composer";
 import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
+import {
+  logDataFetchError,
+  logDataLoad,
+  safeJson,
+} from "@/lib/inbox-console";
 
 interface ReplyDraft {
   id: string;
@@ -218,24 +223,35 @@ export function MessageThread({
 
     (async () => {
       setLoading(true);
+      const endpoint = `/api/inbox/conversations/${encodeURIComponent(
+        conversationId,
+      )}/messages`;
+      let res: Response;
       try {
-        const res = await fetch(
-          `/api/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
-          { cache: "no-store" },
-        );
-        const json = await res.json();
-
-        if (cancelled) return;
-
-        if (!res.ok || json.error) {
-          console.error("Failed to fetch messages:", json.error ?? res.statusText);
-        } else {
-          onMessagesLoadedRef.current(json.data ?? []);
-        }
+        res = await fetch(endpoint, { cache: "no-store" });
       } catch (err) {
-        if (!cancelled) {
-          console.error("Failed to fetch messages:", err);
-        }
+        logDataFetchError(endpoint, null, err, { conversationId });
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      const json = await safeJson<{ error?: unknown; data?: Message[] }>(
+        res,
+        endpoint,
+        { conversationId, httpStatus: res.status },
+      );
+
+      if (cancelled) return;
+
+      if (!res.ok || json?.error) {
+        logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+          conversationId,
+          httpStatus: res.status,
+        });
+      } else {
+        const rows = json?.data ?? [];
+        logDataLoad(endpoint, rows.length, { conversationId });
+        onMessagesLoadedRef.current(rows);
       }
       if (!cancelled) setLoading(false);
     })();
@@ -253,8 +269,10 @@ export function MessageThread({
     let cancelled = false;
 
     (async () => {
+      const endpoint = "/api/data";
+      let res: Response;
       try {
-        const res = await fetch("/api/data", {
+        res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -263,18 +281,29 @@ export function MessageThread({
             filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
           }),
         });
-        const json = await res.json();
-        if (cancelled) return;
-        if (json.error) {
-          console.error("Failed to fetch reactions:", json.error);
-          return;
-        }
-        setReactions((json.data as MessageReaction[]) ?? []);
       } catch (err) {
-        if (!cancelled) {
-          console.error("Failed to fetch reactions:", err);
-        }
+        logDataFetchError(endpoint, null, err, {
+          table: "message_reactions",
+          conversationId,
+        });
+        return;
       }
+
+      const json = await safeJson<{
+        error?: unknown;
+        data?: MessageReaction[];
+      }>(res, endpoint, { table: "message_reactions", conversationId });
+
+      if (cancelled) return;
+
+      if (!res.ok || json?.error) {
+        logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+          table: "message_reactions",
+          conversationId,
+        });
+        return;
+      }
+      setReactions(json?.data ?? []);
     })();
 
     return () => {
@@ -291,8 +320,10 @@ export function MessageThread({
     let cancelled = false;
 
     const poll = async () => {
+      const endpoint = "/api/data";
+      let res: Response;
       try {
-        const res = await fetch("/api/data", {
+        res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -301,18 +332,29 @@ export function MessageThread({
             filters: [{ column: "conversation_id", operator: "eq", value: conversationId }],
           }),
         });
-        if (cancelled) return;
-        const json = await res.json();
-        if (json.error) {
-          console.error("Failed to poll reactions:", json.error);
-          return;
-        }
-        setReactions((json.data as MessageReaction[]) ?? []);
       } catch (err) {
-        if (!cancelled) {
-          console.error("Failed to poll reactions:", err);
-        }
+        logDataFetchError(endpoint, null, err, {
+          table: "message_reactions",
+          conversationId,
+          source: "poll",
+        });
+        return;
       }
+      if (cancelled) return;
+      const json = await safeJson<{
+        error?: unknown;
+        data?: MessageReaction[];
+      }>(res, endpoint, { table: "message_reactions", conversationId, source: "poll" });
+      if (cancelled) return;
+      if (!res.ok || json?.error) {
+        logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+          table: "message_reactions",
+          conversationId,
+          source: "poll",
+        });
+        return;
+      }
+      setReactions(json?.data ?? []);
     };
 
     const interval = setInterval(poll, 5000);
@@ -339,18 +381,40 @@ export function MessageThread({
   // is 0 the condition is false, so no further UPDATE is issued.
   useEffect(() => {
     if (!conversationId || !hasUnread) return;
-    fetch("/api/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "update",
-        table: "conversations",
-        values: { unread_count: 0 },
-        filters: [{ column: "id", operator: "eq", value: conversationId }],
-      }),
-    }).then((res) => res.json()).then((json) => {
-      if (json.error) console.error("Failed to reset unread_count:", json.error);
-    });
+    const endpoint = "/api/data";
+    (async () => {
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update",
+            table: "conversations",
+            values: { unread_count: 0 },
+            filters: [{ column: "id", operator: "eq", value: conversationId }],
+          }),
+        });
+        const json = await safeJson<{ error?: unknown }>(res, endpoint, {
+          action: "update",
+          table: "conversations",
+          values: "unread_count:0",
+          conversationId,
+        });
+        if (!res.ok || json?.error) {
+          logDataFetchError(endpoint, res.status, json?.error ?? res.statusText, {
+            action: "update",
+            table: "conversations",
+            conversationId,
+          });
+        }
+      } catch (err) {
+        logDataFetchError(endpoint, null, err, {
+          action: "update",
+          table: "conversations",
+          conversationId,
+        });
+      }
+    })();
   }, [conversationId, hasUnread]);
 
   // Auto-scroll to bottom on new messages

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { Message, Conversation } from "@/types";
+import { safeJson } from "@/lib/inbox-console";
 interface RealtimeEvent<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";
   new: T;
@@ -31,10 +32,25 @@ async function fetchAll<T extends { id: string }>(
         ...(filters ? { filters } : {}),
       }),
     });
-    const json = await res.json();
-    if (json.error) return [];
-    return (json.data as T[]) ?? [];
-  } catch {
+    const json = await safeJson<{ error?: unknown; data?: T[] }>(
+      res,
+      "/api/data",
+      { action: "select", table, httpStatus: res.status },
+    );
+    if (!res.ok || json?.error) {
+      console.error("[inbox] poll fetch failed", {
+        table,
+        status: res.status,
+        error: json?.error,
+      });
+      return [];
+    }
+    return (json?.data as T[]) ?? [];
+  } catch (err) {
+    console.error("[inbox] poll fetch failed", {
+      table,
+      reason: err instanceof Error ? err.message : err,
+    });
     return [];
   }
 }

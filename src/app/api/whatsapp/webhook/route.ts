@@ -58,12 +58,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   // Read raw body first so we can HMAC-verify and inspect the payload.
   const rawBody = await request.text()
-
   const signature = request.headers.get('x-hub-signature-256')
-  if (!verifyMetaWebhookSignature(rawBody, signature)) {
-    console.warn('[webhook] rejected request with invalid signature')
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
-  }
 
   let body: { entry?: WhatsAppWebhookEntry[] }
   try {
@@ -72,7 +67,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Resolve the owner from the payload's phone_number_id.
+  // Resolve the owner from the payload's phone_number_id to check
+  // for a per-user META_APP_SECRET before verifying the signature.
   let phoneNumberId: string | null = null
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes) {
@@ -82,12 +78,21 @@ export async function POST(request: Request) {
     }
   }
 
-  let config: { user_id: string; access_token: string } | null = null
+  let config: { user_id: string; access_token: string; meta_app_secret?: string | null } | null = null
   if (phoneNumberId) {
     config = await resolveConfigByPhoneNumberId(phoneNumberId)
     if (!config) {
       console.error('No config found for phone_number_id:', phoneNumberId)
     }
+  }
+
+  if (!verifyMetaWebhookSignature(rawBody, signature, config?.meta_app_secret ?? undefined)) {
+    console.warn('[webhook] rejected request with invalid signature', {
+      phone_number_id: phoneNumberId,
+      user_id: config?.user_id,
+      has_per_user_secret: !!config?.meta_app_secret,
+    })
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
   // Process asynchronously so we can ack Meta within their timeout.

@@ -55,33 +55,69 @@ export interface WhatsAppWebhookEntry {
   }>
 }
 
+export interface WebhookConfig {
+  user_id: string
+  access_token: string
+  meta_app_secret?: string | null
+}
+
 /**
  * Resolve the receiving user's config from a per-user webhook URL.
  * Uses the URL's user_id to directly fetch that user's config — no
  * ambiguous phone_number_id lookup, so duplicate phone_number_id rows
  * across users can never break this path.
+ *
+ * If the user saved a per-user `meta_app_secret` (for a different Meta
+ * App), it is decrypted and returned in the config so signature
+ * verification uses the correct signing key.
  */
-export async function resolveConfigByUserId(userId: string) {
+export async function resolveConfigByUserId(userId: string): Promise<WebhookConfig | null> {
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
     .eq('user_id', userId)
     .maybeSingle()
-  return config
+  if (!config) return null
+  let metaAppSecret: string | null = null
+  if (config.meta_app_secret) {
+    try {
+      metaAppSecret = decrypt(config.meta_app_secret)
+    } catch {
+      console.warn('[webhook] Failed to decrypt meta_app_secret for user', userId, '— falling back to global META_APP_SECRET')
+    }
+  }
+  return {
+    user_id: config.user_id,
+    access_token: config.access_token,
+    meta_app_secret: metaAppSecret,
+  }
 }
 
 /**
  * Resolve the receiving user's config from the legacy shared webhook
  * URL using the phone_number_id carried in the Meta payload.
  */
-export async function resolveConfigByPhoneNumberId(phoneNumberId: string) {
+export async function resolveConfigByPhoneNumberId(phoneNumberId: string): Promise<WebhookConfig | null> {
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
     .eq('phone_number_id', phoneNumberId)
     .limit(1)
     .maybeSingle()
-  return config
+  if (!config) return null
+  let metaAppSecret: string | null = null
+  if (config.meta_app_secret) {
+    try {
+      metaAppSecret = decrypt(config.meta_app_secret)
+    } catch {
+      console.warn('[webhook] Failed to decrypt meta_app_secret for phone_number_id', phoneNumberId, '— falling back to global META_APP_SECRET')
+    }
+  }
+  return {
+    user_id: config.user_id,
+    access_token: config.access_token,
+    meta_app_secret: metaAppSecret,
+  }
 }
 
 // The happy-path status ladder — pending → sent → delivered → read →
@@ -611,7 +647,7 @@ async function findOrCreateConversation(userId: string, contactId: string) {
  */
 export async function processWebhookForUser(
   body: { entry?: WhatsAppWebhookEntry[] },
-  config: { user_id: string; access_token: string } | null,
+  config: WebhookConfig | null,
 ) {
   if (!body.entry) return
   if (!config) return
@@ -727,13 +763,16 @@ export async function verifyChallengeAnyUser(verifyToken: string | null) {
  */
 export async function handleWebhookPost(
   request: Request,
-  config: { user_id: string; access_token: string } | null
+  config: WebhookConfig | null
 ) {
   const rawBody = await request.text()
   const signature = request.headers.get('x-hub-signature-256')
 
-  if (!verifyMetaWebhookSignature(rawBody, signature)) {
-    console.warn('[webhook] rejected request with invalid signature')
+  if (!verifyMetaWebhookSignature(rawBody, signature, config?.meta_app_secret ?? undefined)) {
+    console.warn('[webhook] rejected request with invalid signature', {
+      user_id: config?.user_id,
+      has_per_user_secret: !!config?.meta_app_secret,
+    })
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
