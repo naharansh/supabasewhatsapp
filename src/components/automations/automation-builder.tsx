@@ -289,7 +289,12 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           <TriggerCard
             type={state.trigger_type}
             config={state.trigger_config}
-            onTypeChange={(t) => patchTop("trigger_type", t)}
+            onTypeChange={(t) => {
+              patchTop("trigger_type", t)
+              if (t === "keyword_match") {
+                patchTop("trigger_config", { keywords: [], match_type: "contains" })
+              }
+            }}
             onConfigChange={(c) => patchTop("trigger_config", c)}
           />
           <StepList
@@ -422,7 +427,7 @@ function KeywordMatchConfig({
               ...config,
               keywords: e.target.value
                 .split(",")
-                .map((s) => s.trim())
+                .map((s) => s.trim().replace(/^["']|["']$/g, ""))
                 .filter(Boolean),
             })
           }

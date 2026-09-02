@@ -53,8 +53,8 @@ export function WhatsAppConfig() {
   const [tokenEdited, setTokenEdited] = useState(false);
 
   const webhookUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/api/whatsapp/webhook`
+    typeof window !== 'undefined' && user?.id
+      ? `${window.location.origin}/api/whatsapp/webhook/${user.id}`
       : '';
 
   const fetchConfig = useCallback(async (userId: string) => {

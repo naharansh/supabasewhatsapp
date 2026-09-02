@@ -393,8 +393,17 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
     .select('id')
     .match({ user_id: args.automation.user_id, contact_id: args.contactId })
     .maybeSingle()
-  if (!conv) throw new Error('no conversation for contact')
-  return conv.id
+  if (conv) return conv.id
+  const { data: created } = await admin.from('conversations')
+    .insert({
+      user_id: args.automation.user_id,
+      contact_id: args.contactId,
+      status: 'open',
+    })
+    .select('id')
+    .single()
+  if (!created) throw new Error('failed to create conversation for contact')
+  return created.id
 }
 
 function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
@@ -405,7 +414,7 @@ function triggerMatches(automation: Automation, ctx: AutomationContext | undefin
   if (!text) return false
   const haystack = cfg.case_sensitive ? text : text.toLowerCase()
   return cfg.keywords.some((raw) => {
-    const k = cfg.case_sensitive ? raw : raw.toLowerCase()
+    const k = (cfg.case_sensitive ? raw : raw.toLowerCase()).replace(/^["']|["']$/g, "")
     return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
   })
 }

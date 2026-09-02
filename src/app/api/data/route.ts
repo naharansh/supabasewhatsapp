@@ -7,7 +7,7 @@ const ALLOWED_TABLES = [
   'contact_custom_values', 'contact_notes', 'broadcasts',
   'broadcast_recipients', 'message_templates', 'whatsapp_config',
   'deals', 'pipeline_stages', 'pipelines', 'profiles', 'conversations',
-  'messages', 'message_reactions', 'automations',
+  'messages', 'message_reactions', 'automations', 'automation_logs', 'automation_steps',
 ]
 
 const TABLES_WITH_USER_ID = [
