@@ -124,12 +124,23 @@ export async function POST(request: Request) {
     }
 
     let encryptedAccessToken: string
-    let encryptedVerifyToken: string | null
-    let encryptedMetaAppSecret: string | null
+    let encryptedVerifyToken: string | null = null
+    let encryptedMetaAppSecret: string | null = null
+    // Distinguish "field omitted" (preserve existing) from "cleared"
+    // (explicit null / empty string). The client omits `verify_token` when
+    // it must keep the stored one, and sends null to clear it.
+    const verifyTokenProvided =
+      Object.prototype.hasOwnProperty.call(body, 'verify_token')
+    const metaAppSecretProvided =
+      Object.prototype.hasOwnProperty.call(body, 'meta_app_secret')
     try {
       encryptedAccessToken = encrypt(access_token)
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
-      encryptedMetaAppSecret = meta_app_secret ? encrypt(meta_app_secret) : null
+      if (verifyTokenProvided && verify_token != null && verify_token !== '') {
+        encryptedVerifyToken = encrypt(verify_token)
+      }
+      if (metaAppSecretProvided && meta_app_secret != null && meta_app_secret !== '') {
+        encryptedMetaAppSecret = encrypt(meta_app_secret)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown encryption error'
       console.error('Encryption failed:', message)
@@ -151,18 +162,23 @@ export async function POST(request: Request) {
     if (findError) throw findError
 
     if (existing) {
+      const update: Record<string, unknown> = {
+        phone_number_id,
+        waba_id: waba_id || null,
+        access_token: encryptedAccessToken,
+        status: 'connected',
+        connected_at: new Date(),
+        updated_at: new Date(),
+      }
+      // Only touch the encrypted secrets when the client explicitly sent
+      // them (either a new value or an explicit null to clear). Omitting the
+      // field preserves the previously stored token/secret.
+      if (verifyTokenProvided) update.verify_token = encryptedVerifyToken
+      if (metaAppSecretProvided) update.meta_app_secret = encryptedMetaAppSecret
+
       const { error: updateError } = await supabase
         .from('whatsapp_config')
-        .update({
-          phone_number_id,
-          waba_id: waba_id || null,
-          access_token: encryptedAccessToken,
-          verify_token: encryptedVerifyToken,
-          meta_app_secret: encryptedMetaAppSecret,
-          status: 'connected',
-          connected_at: new Date(),
-          updated_at: new Date(),
-        })
+        .update(update)
         .eq('user_id', userId)
 
       if (updateError) throw updateError

@@ -66,6 +66,15 @@ export function WhatsAppConfig() {
       const res = await fetch('/api/whatsapp/config', { method: 'GET' });
       const payload = await res.json();
 
+      console.log('[whatsapp-config] API credentials:', {
+        connected: payload.connected,
+        phone_number_id: payload.config?.phone_number_id ?? null,
+        waba_id: payload.config?.waba_id ?? null,
+        has_meta_app_secret: payload.config?.has_meta_app_secret ?? null,
+        status: payload.connected ? 'connected' : 'disconnected',
+        reason: payload.reason ?? null,
+      });
+
       if (payload.config) {
         setConfig({ ...payload.config, id: '', user_id: userId } as WhatsAppConfigType);
         setPhoneNumberId(payload.config.phone_number_id || '');
@@ -134,8 +143,16 @@ export function WhatsAppConfig() {
       const payload: Record<string, unknown> = {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
-        verify_token: verifyToken.trim() || null,
       };
+
+      // Only send a verify_token when one is actually entered. An empty
+      // field on an existing config must NOT overwrite the stored token
+      // with NULL / empty — that silently breaks webhook re-verification.
+      // Omitting the field lets the server preserve the stored token on
+      // update, and write NULL on a fresh insert.
+      if (verifyToken.trim()) {
+        payload.verify_token = verifyToken.trim();
+      }
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
         payload.access_token = accessToken.trim();
