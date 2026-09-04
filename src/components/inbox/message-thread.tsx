@@ -482,6 +482,101 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage]
   );
 
+  const handleSendMedia = useCallback(
+    async (
+      file: File,
+      caption: string,
+      mediaType: "image" | "video" | "audio" | "document",
+      replyToId?: string,
+    ) => {
+      if (!conversation) return;
+
+      const tempId = `temp-${Date.now()}`;
+
+      const uploadForm = new FormData();
+      uploadForm.append("file", file);
+      uploadForm.append("conversation_id", conversation.id);
+
+      let uploadRes: Response;
+      try {
+        uploadRes = await fetch("/api/upload/media", {
+          method: "POST",
+          body: uploadForm,
+        });
+      } catch (err) {
+        console.error("Failed to upload media:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Upload failed: ${reason}`);
+        return;
+      }
+
+      const uploadPayload = await uploadRes.json().catch(() => ({}));
+
+      if (!uploadRes.ok) {
+        const reason = (uploadPayload as { error?: string })?.error || `HTTP ${uploadRes.status}`;
+        console.error("Media upload failed:", reason);
+        toast.error(`Upload failed: ${reason}`);
+        return;
+      }
+
+      const { url: mediaUrl, fileName } = uploadPayload as {
+        url: string;
+        contentType: "image" | "video" | "audio" | "document";
+        mimeType: string;
+        fileName: string;
+      };
+
+      // Optimistic update — shows the media bubble immediately with "sending" status.
+      // For documents, show the original filename as the label; for others use the caption.
+      const optimisticMsg: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        sender_type: "agent",
+        content_type: mediaType,
+        content_text: mediaType === "document" ? fileName || undefined : caption || undefined,
+        media_url: mediaUrl,
+        status: "sending",
+        created_at: new Date().toISOString(),
+        reply_to_message_id: replyToId,
+      };
+      onNewMessage(optimisticMsg);
+      setReplyTo(null);
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            message_type: mediaType,
+            content_text: caption || null,
+            media_url: mediaUrl,
+            original_filename: fileName,
+            reply_to_message_id: replyToId,
+          }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = (payload as { error?: string })?.error || `HTTP ${res.status}`;
+          console.error("Failed to send media:", reason);
+          toast.error(`Failed to send: ${reason}`);
+          onUpdateMessage(tempId, { status: "failed" });
+          return;
+        }
+
+        onUpdateMessage(tempId, { status: "sent" });
+      } catch (err) {
+        console.error("Failed to send media:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Failed to send: ${reason}`);
+        onUpdateMessage(tempId, { status: "failed" });
+      }
+    },
+    [conversation, onNewMessage, onUpdateMessage],
+  );
+
   const handleStatusChange = useCallback(
     async (status: ConversationStatus) => {
       if (!conversation) return;
@@ -877,6 +972,7 @@ export function MessageThread({
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
+        onSendMedia={handleSendMedia}
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}

@@ -267,6 +267,90 @@ export async function sendTemplateMessage(
 }
 
 // ============================================================
+// Media (outgoing)
+// ============================================================
+
+export type MediaMessageType = 'image' | 'video' | 'audio' | 'document'
+
+export interface SendMediaMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  mediaType: MediaMessageType
+  link: string
+  /** Optional caption (text) shown with the media. Not supported for audio. */
+  caption?: string
+  /** Optional filename for documents. */
+  filename?: string
+  /** Meta's message_id of the message being replied to (quote preview). */
+  contextMessageId?: string
+}
+
+/**
+ * Send a media message (image, video, audio, or document) via a public
+ * link. Only works inside the 24-hour customer service window.
+ *
+ * Meta accepts publicly accessible HTTPS URLs and downloads the media
+ * itself. Sizes are validated by Meta's limits (image 5MB, video/audio
+ * 16MB, document 100MB).
+ */
+export async function sendMediaMessage(
+  args: SendMediaMessageArgs
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    mediaType,
+    link,
+    caption,
+    filename,
+    contextMessageId,
+  } = args
+
+  if (!link) {
+    throw new Error(`Media message requires a link for ${mediaType}.`)
+  }
+  if (mediaType === 'audio' && caption) {
+    throw new Error('Audio messages do not support captions.')
+  }
+
+  const mediaPayload: Record<string, unknown> = { link }
+  if (mediaType === 'document' && filename) {
+    mediaPayload.filename = filename
+  }
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: mediaType,
+    [mediaType]: mediaPayload,
+  }
+  if (caption && mediaType !== 'audio') {
+    mediaPayload.caption = caption
+  }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId }
+  }
+
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+// ============================================================
 // Reactions
 // ============================================================
 
