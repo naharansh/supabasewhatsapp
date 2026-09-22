@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -293,6 +293,10 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               patchTop("trigger_type", t)
               if (t === "keyword_match") {
                 patchTop("trigger_config", { keywords: [], match_type: "contains" })
+              } else if (t === "tag_added") {
+                patchTop("trigger_config", { tag_id: "" })
+              } else if (t === "time_based") {
+                patchTop("trigger_config", { schedule: "" })
               }
             }}
             onConfigChange={(c) => patchTop("trigger_config", c)}
@@ -380,14 +384,17 @@ function TriggerCard({
               />
             )}
             {type === "tag_added" && (
-              <Input
-                placeholder="Tag id"
-                value={(config.tag_id as string) ?? ""}
-                onChange={(e) =>
-                  onConfigChange({ ...config, tag_id: e.target.value })
-                }
-                className="bg-slate-800 text-white"
-              />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-400">
+                  Tag to watch for
+                </label>
+                <TagSelect
+                  value={(config.tag_id as string) ?? ""}
+                  onChange={(tagId) =>
+                    onConfigChange({ ...config, tag_id: tagId })
+                  }
+                />
+              </div>
             )}
             {type === "time_based" && (
               <Input
@@ -453,9 +460,70 @@ function KeywordMatchConfig({
   )
 }
 
-// ------------------------------------------------------------
-// Step list + card + connectors
-// ------------------------------------------------------------
+function TagSelect({
+  value,
+  onChange,
+  placeholder = "Select a tag",
+}: {
+  value: string
+  onChange: (tagId: string) => void
+  placeholder?: string
+}) {
+  const [tags, setTags] = useState<{ id: string; name: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "select",
+        table: "tags",
+        order: { column: "name" },
+      }),
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        setTags((json.data ?? []) as { id: string; name: string }[])
+        setLoadError(false)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return (
+    <div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white focus:border-primary focus:outline-none"
+      >
+        <option value="">{placeholder}</option>
+        {tags.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </select>
+      {loading && (
+        <p className="mt-1 text-[11px] text-slate-500">Loading tags…</p>
+      )}
+      {loadError && (
+        <p className="mt-1 text-[11px] text-red-400">Could not load tags</p>
+      )}
+    </div>
+  )
+}
 
 type ParentScope =
   | { kind: "root" }
@@ -751,11 +819,10 @@ function StepEditor({
     case "add_tag":
     case "remove_tag":
       return (
-        <FieldBlock label="Tag id">
-          <Input
+        <FieldBlock label="Tag">
+          <TagSelect
             value={(cfg.tag_id as string) ?? ""}
-            onChange={(e) => set({ tag_id: e.target.value })}
-            className="bg-slate-800 text-white"
+            onChange={(tagId) => set({ tag_id: tagId })}
           />
         </FieldBlock>
       )

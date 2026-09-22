@@ -5,6 +5,7 @@ import type {
   AutomationTriggerType,
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
+  TagTriggerConfig,
   SendMessageStepConfig,
   SendTemplateStepConfig,
   SendWebhookStepConfig,
@@ -55,6 +56,36 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
     }
   } catch (err) {
     console.error('[automations] dispatch failed:', err)
+  }
+}
+
+export interface TagAddedDispatchInput {
+  contactId: string
+  tagId: string
+  /** Caller-known owner of the contact; resolved from contacts when omitted. */
+  userId?: string
+}
+
+export async function dispatchTagAdded(input: TagAddedDispatchInput): Promise<void> {
+  try {
+    const admin = createAdminClient()
+    let userId = input.userId
+    if (!userId) {
+      const { data: contact } = await admin.from('contacts')
+        .select('user_id')
+        .eq('id', input.contactId)
+        .maybeSingle()
+      userId = contact?.user_id ?? null
+    }
+    if (!userId) return
+    await runAutomationsForTrigger({
+      userId,
+      triggerType: 'tag_added',
+      contactId: input.contactId,
+      context: { tag_id: input.tagId },
+    })
+  } catch (err) {
+    console.error('[automations] tag_added dispatch failed:', err)
   }
 }
 
@@ -180,7 +211,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         parent_step_id: args.parentStepId,
         branch: args.branch,
         next_step_position: step.position + 1,
-        context: args.context as any,
+        context: args.context,
         run_at: new Date(Date.now() + ms).toISOString(),
         status: 'pending',
       }).select().single()
@@ -406,17 +437,24 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   return created.id
 }
 
-function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
-  if (automation.trigger_type !== 'keyword_match') return true
-  const cfg = automation.trigger_config as KeywordMatchTriggerConfig
-  if (!cfg?.keywords || cfg.keywords.length === 0) return false
-  const text = (ctx?.message_text ?? '').toString()
-  if (!text) return false
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase()
-  return cfg.keywords.some((raw) => {
-    const k = (cfg.case_sensitive ? raw : raw.toLowerCase()).replace(/^["']|["']$/g, "")
-    return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
-  })
+export function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
+  if (automation.trigger_type === 'keyword_match') {
+    const cfg = automation.trigger_config as KeywordMatchTriggerConfig
+    if (!cfg?.keywords || cfg.keywords.length === 0) return false
+    const text = (ctx?.message_text ?? '').toString()
+    if (!text) return false
+    const haystack = cfg.case_sensitive ? text : text.toLowerCase()
+    return cfg.keywords.some((raw) => {
+      const k = (cfg.case_sensitive ? raw : raw.toLowerCase()).replace(/^["']|["']$/g, "")
+      return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
+    })
+  }
+  if (automation.trigger_type === 'tag_added') {
+    const cfg = automation.trigger_config as TagTriggerConfig
+    if (!cfg?.tag_id) return false
+    return String(ctx?.tag_id ?? '') === String(cfg.tag_id)
+  }
+  return true
 }
 
 async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
@@ -470,6 +508,7 @@ function interpolate(s: string, args: ExecuteArgs): string {
   return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
     const [ns, prop] = String(key).split('.')
     if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
+    if (ns === 'tag' && prop === 'id') return String(args.context.tag_id ?? '')
     if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
     return ''
   })

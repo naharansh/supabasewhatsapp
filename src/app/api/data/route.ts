@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { dispatchTagAdded } from '@/lib/automations/engine'
 
 const ALLOWED_TABLES = [
   'tags', 'custom_fields', 'contacts', 'contact_tags',
@@ -27,6 +28,49 @@ function isTableNotFound(error: unknown): boolean {
 
 function emptyResponse(action: string) {
   return NextResponse.json({ data: action === 'select' ? [] : null, count: 0 })
+}
+
+async function dispatchTagAddedForNewRows(
+  supabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  values: unknown,
+): Promise<void> {
+  const rows = (Array.isArray(values) ? values : [values]).filter(
+    (v): v is { contact_id: string; tag_id: string } =>
+      !!v && typeof v === 'object' &&
+      'contact_id' in v && 'tag_id' in v &&
+      !!v.contact_id && !!v.tag_id,
+  )
+  if (rows.length === 0) return
+
+  const contactIds = [...new Set(rows.map((r) => String(r.contact_id)))]
+  const existingKeys = new Set<string>()
+
+  const PAGE = 1000
+  for (let c = 0; c < contactIds.length; c += 100) {
+    const chunk = contactIds.slice(c, c + 100)
+    for (let page = 0; ; page++) {
+      const { data: batch, error } = await supabase
+        .from('contact_tags')
+        .select('contact_id, tag_id')
+        .in('contact_id', chunk)
+        .range(page * PAGE, page * PAGE + PAGE - 1)
+      if (error) throw error
+      if (!batch || batch.length === 0) break
+      for (const r of batch) existingKeys.add(`${r.contact_id}:${r.tag_id}`)
+      if (batch.length < PAGE) break
+    }
+  }
+
+  for (const row of rows) {
+    const key = `${row.contact_id}:${row.tag_id}`
+    if (existingKeys.has(key)) continue
+    await dispatchTagAdded({
+      contactId: String(row.contact_id),
+      tagId: String(row.tag_id),
+      userId,
+    })
+  }
 }
 
 export async function POST(request: Request) {
@@ -158,6 +202,16 @@ export async function POST(request: Request) {
         if (select) query = query.select()
         const { data, error } = await query
         if (error) throw error
+
+        // A "Tag Added" automation trigger fires when a genuinely-new
+        // (contact_id, tag_id) row appears. Fire-and-forget so a slow
+        // automation never blocks the UI write.
+        if (table === 'contact_tags' && userId) {
+          void dispatchTagAddedForNewRows(supabase, userId, values).catch((err) =>
+            console.error('[automations] tag_added dispatch failed:', err),
+          )
+        }
+
         return NextResponse.json({ data })
       }
 
