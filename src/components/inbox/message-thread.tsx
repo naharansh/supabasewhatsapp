@@ -16,6 +16,8 @@ import {
   MessageSquare,
   ChevronDown,
   User as UserIcon,
+  UserCheck,
+  UserPlus,
   Clock,
   ArrowLeft,
   RefreshCw,
@@ -62,6 +64,13 @@ interface MessageThreadProps {
   onNewMessage: (message: Message) => void;
   onUpdateMessage: (id: string, updates: Partial<Message>) => void;
   onStatusChange: (conversationId: string, status: ConversationStatus) => void;
+  /**
+   * Fired after the agent assigns (or unassigns) this conversation to a
+   * user. The parent updates its conversations state so the header label
+   * reflects the change right away; realtime converges it for other
+   * clients.
+   */
+  onAssignedChange?: (conversationId: string, agentId: string | null) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
    * hidden. This callback lets the page deselect the active conversation
@@ -137,6 +146,7 @@ export function MessageThread({
   onNewMessage,
   onUpdateMessage,
   onStatusChange,
+  onAssignedChange,
   onBack,
   resyncToken = 0,
   onRefresh,
@@ -597,6 +607,33 @@ export function MessageThread({
     [conversation, onStatusChange]
   );
 
+  const handleAssignAgent = useCallback(
+    async (agentId: string | null) => {
+      if (!conversation) return;
+
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          table: "conversations",
+          values: { assigned_agent_id: agentId },
+          filters: [{ column: "id", operator: "eq", value: conversation.id }],
+        }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        const reason = (payload as { error?: string })?.error ?? `HTTP ${res.status}`;
+        toast.error(`Failed to assign: ${reason}`);
+        return;
+      }
+
+      onAssignedChange?.(conversation.id, agentId);
+    },
+    [conversation, onAssignedChange]
+  );
+
   const handleOpenTemplates = useCallback(() => {
     setTemplateModalOpen(true);
   }, []);
@@ -799,6 +836,7 @@ export function MessageThread({
     (s) => s.value === conversation.status
   );
   const currentUserLabel = user?.name?.trim() || user?.email || "Me";
+  const assignedToMe = !!user?.id && conversation.assigned_agent_id === user.id;
 
   return (
     <div className={cn("flex flex-1 flex-col", DOODLE_BG_CLASSES)}>
@@ -884,6 +922,45 @@ export function MessageThread({
                   {opt.label}
                 </DropdownMenuItem>
               ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Assignment control */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs hover:bg-slate-800">
+              {assignedToMe ? (
+                <>
+                  <UserCheck className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-primary">Assigned to me</span>
+                </>
+              ) : (
+                <>
+                  <UserPlus className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="text-slate-300">Assign</span>
+                </>
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="border-slate-700 bg-slate-800"
+            >
+              {!assignedToMe && user?.id && (
+                <DropdownMenuItem
+                  onClick={() => handleAssignAgent(user.id)}
+                  className="gap-2 text-sm text-primary"
+                >
+                  <UserCheck className="h-3.5 w-3.5" />
+                  Assign to me
+                </DropdownMenuItem>
+              )}
+              {assignedToMe && (
+                <DropdownMenuItem
+                  onClick={() => handleAssignAgent(null)}
+                  className="text-sm text-slate-300"
+                >
+                  Unassign
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 

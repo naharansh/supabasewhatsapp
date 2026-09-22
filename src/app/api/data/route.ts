@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { dispatchTagAdded } from '@/lib/automations/engine'
+import { dispatchTagAdded, dispatchConversationAssigned } from '@/lib/automations/engine'
 
 const ALLOWED_TABLES = [
   'tags', 'custom_fields', 'contacts', 'contact_tags',
@@ -200,6 +200,40 @@ export async function POST(request: Request) {
 
       case 'update': {
         const { values, filters = [] } = body
+        const assignedTo = (values as Record<string, unknown>)?.assigned_agent_id
+
+        // Detect a genuine assignment change so a "Conversation Assigned"
+        // automation can fire. Dispatch only when assigned_agent_id moves
+        // to a different non-null value — re-assigning to the same agent
+        // (or an explicit unassign to null) never triggers.
+        let assignmentDispatch: {
+          userId: string
+          conversationId: string
+          contactId: string | null
+          agentId: string
+        } | null = null
+        if (table === 'conversations' && assignedTo) {
+          const idFilter = (filters as { column: string; operator: string; value: unknown }[]).find(
+            (f) => f.column === 'id' && f.operator === 'eq'
+          )
+          const conversationId = idFilter ? String(idFilter.value ?? '') : ''
+          if (conversationId) {
+            const { data: prev, error } = await supabase
+              .from('conversations')
+              .select('assigned_agent_id, contact_id')
+              .eq('id', conversationId)
+              .maybeSingle()
+            if (!error && prev && String(prev.assigned_agent_id ?? '') !== String(assignedTo)) {
+              assignmentDispatch = {
+                userId,
+                conversationId,
+                contactId: prev.contact_id ?? null,
+                agentId: String(assignedTo),
+              }
+            }
+          }
+        }
+
         query = supabase.from(table).update(values)
 
         if (TABLES_WITH_USER_ID.includes(table)) {
@@ -213,6 +247,16 @@ export async function POST(request: Request) {
         }
         const { data, error } = await query
         if (error) throw error
+
+        // A "Conversation Assigned" automation trigger fires when a
+        // conversation gets assigned to an agent. Fire-and-forget so a
+        // slow automation never blocks the UI write.
+        if (assignmentDispatch) {
+          void dispatchConversationAssigned(assignmentDispatch).catch((err) =>
+            console.error('[automations] conversation_assigned dispatch failed:', err),
+          )
+        }
+
         return NextResponse.json({ data })
       }
 

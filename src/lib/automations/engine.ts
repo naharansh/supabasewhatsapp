@@ -89,6 +89,29 @@ export async function dispatchTagAdded(input: TagAddedDispatchInput): Promise<vo
   }
 }
 
+export interface ConversationAssignedDispatchInput {
+  userId: string
+  conversationId: string
+  contactId?: string | null
+  agentId: string
+}
+
+export async function dispatchConversationAssigned(input: ConversationAssignedDispatchInput): Promise<void> {
+  try {
+    await runAutomationsForTrigger({
+      userId: input.userId,
+      triggerType: 'conversation_assigned',
+      contactId: input.contactId ?? null,
+      context: {
+        conversation_id: input.conversationId,
+        agent_id: input.agentId,
+      },
+    })
+  } catch (err) {
+    console.error('[automations] conversation_assigned dispatch failed:', err)
+  }
+}
+
 export async function resumePendingExecution(pending: {
   id: string
   automation_id: string
