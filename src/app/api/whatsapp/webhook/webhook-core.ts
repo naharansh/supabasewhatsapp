@@ -365,7 +365,7 @@ async function processMessage(
 
   let createdMessage: { id: string } | null = null
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('messages')
       .insert({
         conversation_id: conversation.id,
@@ -381,7 +381,26 @@ async function processMessage(
       })
       .select()
       .single()
-    createdMessage = data
+    if (error) {
+      // Log the real Postgres error so a schema mismatch (e.g. missing
+      // reply_to_message_id / interactive_reply_id columns or an
+      // out-of-date content_type CHECK) is visible in server logs instead
+      // of being silently swallowed — a failed INSERT here is exactly why
+      // an inbound WhatsApp message never reaches the inbox.
+      console.error(
+        '[webhook] messages INSERT failed for inbound message',
+        {
+          meta_message_id: message.id,
+          conversation_id: conversation.id,
+          content_type: contentType,
+          error: error.message,
+          details: error.details,
+          hint: error.hint,
+        },
+      )
+    } else {
+      createdMessage = data
+    }
   } catch (e) {
     console.error('Error inserting message:', e)
   }

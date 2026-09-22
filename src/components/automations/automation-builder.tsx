@@ -413,7 +413,7 @@ function KeywordMatchConfig({
   config: KeywordMatchTriggerConfig
   onChange: (c: Record<string, unknown>) => void
 }) {
-  const keywords = config?.keywords ?? []
+  const [raw, setRaw] = useState<string>((config?.keywords ?? []).join(", "))
   return (
     <div className="space-y-2">
       <div>
@@ -421,16 +421,18 @@ function KeywordMatchConfig({
           Keywords (comma-separated)
         </label>
         <Input
-          value={keywords.join(", ")}
-          onChange={(e) =>
+          value={raw}
+          onChange={(e) => {
+            const next = e.target.value
+            setRaw(next)
             onChange({
               ...config,
-              keywords: e.target.value
+              keywords: next
                 .split(",")
                 .map((s) => s.trim().replace(/^["']|["']$/g, ""))
                 .filter(Boolean),
             })
-          }
+          }}
           className="bg-slate-800 text-white"
         />
       </div>

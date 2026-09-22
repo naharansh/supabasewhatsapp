@@ -296,7 +296,7 @@ export async function POST(request: Request) {
       content_text ||
       (mediaType === 'document' ? (original_filename || null) : null)
 
-    const { data: messageRecord } = await supabase
+    const { data: messageRecord, error: insertMessageError } = await supabase
       .from('messages')
       .insert({
         conversation_id,
@@ -311,6 +311,24 @@ export async function POST(request: Request) {
       })
       .select()
       .single()
+
+    if (insertMessageError) {
+      // The WhatsApp message was delivered to Meta, but storing it in the
+      // `messages` table failed (e.g. the production DB is missing the
+      // reply_to_message_id column). Log loudly — otherwise the send
+      // appears "successful" while the message never shows in the inbox.
+      console.error(
+        '[whatsapp/send] messages INSERT failed after Meta send',
+        {
+          conversation_id,
+          message_type: storedContentType,
+          whatsapp_message_id: waMessageId,
+          error: insertMessageError.message,
+          details: insertMessageError.details,
+          hint: insertMessageError.hint,
+        },
+      )
+    }
 
     await supabase
       .from('conversations')
@@ -339,8 +357,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message_id: messageRecord.id,
+      message_id: messageRecord?.id ?? null,
       whatsapp_message_id: waMessageId,
+      stored: !insertMessageError,
+      warning: insertMessageError
+        ? 'Message delivered to WhatsApp but could not be stored in the database (check server logs).'
+        : undefined,
     })
   } catch (error) {
     console.error('Error in WhatsApp send POST:', error)
