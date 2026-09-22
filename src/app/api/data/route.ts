@@ -30,22 +30,28 @@ function emptyResponse(action: string) {
   return NextResponse.json({ data: action === 'select' ? [] : null, count: 0 })
 }
 
-async function dispatchTagAddedForNewRows(
-  supabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  values: unknown,
-): Promise<void> {
-  const rows = (Array.isArray(values) ? values : [values]).filter(
+function tagRowsFrom(values: unknown): { contact_id: string; tag_id: string }[] {
+  return (Array.isArray(values) ? values : [values]).filter(
     (v): v is { contact_id: string; tag_id: string } =>
       !!v && typeof v === 'object' &&
       'contact_id' in v && 'tag_id' in v &&
       !!v.contact_id && !!v.tag_id,
   )
-  if (rows.length === 0) return
+}
+
+/**
+ * Snapshot of existing (contact_id, tag_id) pairs. MUST run BEFORE the
+ * upsert, otherwise the row we just wrote looks pre-existing and the
+ * tag_added trigger never fires.
+ */
+async function collectExistingTagKeys(
+  supabase: ReturnType<typeof createAdminClient>,
+  rows: { contact_id: string; tag_id: string }[],
+): Promise<Set<string>> {
+  const existingKeys = new Set<string>()
+  if (rows.length === 0) return existingKeys
 
   const contactIds = [...new Set(rows.map((r) => String(r.contact_id)))]
-  const existingKeys = new Set<string>()
-
   const PAGE = 1000
   for (let c = 0; c < contactIds.length; c += 100) {
     const chunk = contactIds.slice(c, c + 100)
@@ -61,7 +67,14 @@ async function dispatchTagAddedForNewRows(
       if (batch.length < PAGE) break
     }
   }
+  return existingKeys
+}
 
+async function dispatchTagAddedForNewRows(
+  rows: { contact_id: string; tag_id: string }[],
+  existingKeys: Set<string>,
+  userId: string,
+): Promise<void> {
   for (const row of rows) {
     const key = `${row.contact_id}:${row.tag_id}`
     if (existingKeys.has(key)) continue
@@ -175,6 +188,13 @@ export async function POST(request: Request) {
         if (select) query = query.select()
         const { data, error } = await query
         if (error) throw error
+
+        if (table === 'contact_tags' && userId) {
+          void dispatchTagAddedForNewRows(tagRowsFrom(values), new Set(), userId).catch((err) =>
+            console.error('[automations] tag_added dispatch failed:', err),
+          )
+        }
+
         return NextResponse.json({ data })
       }
 
@@ -198,6 +218,16 @@ export async function POST(request: Request) {
 
       case 'upsert': {
         const { values, onConflict, select = false } = body
+
+        // Snapshot pre-write state for contact_tags so we can tell which
+        // (contact_id, tag_id) pairs are genuinely new AFTER the write.
+        let preExistingTagKeys: Set<string> | null = null
+        let tagRows: { contact_id: string; tag_id: string }[] = []
+        if (table === 'contact_tags' && userId) {
+          tagRows = tagRowsFrom(values)
+          preExistingTagKeys = await collectExistingTagKeys(supabase, tagRows)
+        }
+
         query = supabase.from(table).upsert(values, onConflict ? { onConflict, ignoreDuplicates: false } : undefined)
         if (select) query = query.select()
         const { data, error } = await query
@@ -206,8 +236,8 @@ export async function POST(request: Request) {
         // A "Tag Added" automation trigger fires when a genuinely-new
         // (contact_id, tag_id) row appears. Fire-and-forget so a slow
         // automation never blocks the UI write.
-        if (table === 'contact_tags' && userId) {
-          void dispatchTagAddedForNewRows(supabase, userId, values).catch((err) =>
+        if (table === 'contact_tags' && userId && preExistingTagKeys) {
+          void dispatchTagAddedForNewRows(tagRows, preExistingTagKeys, userId).catch((err) =>
             console.error('[automations] tag_added dispatch failed:', err),
           )
         }
