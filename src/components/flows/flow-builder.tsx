@@ -29,6 +29,7 @@ import {
   Workflow,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   MessageCircle,
   ListChecks,
   ListPlus,
@@ -657,6 +658,8 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         )}
       </section>
 
+      <FlowLogsPanel flowId={initialFlow.id} />
+
       {/* Sticky-bottom so the activate-readiness status follows the
           user as they scroll through nodes. The parent <main> in the
           dashboard shell is the scroll container; this stays pinned
@@ -667,6 +670,315 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
       </div>
     </div>
   );
+}
+
+// ============================================================
+// Embedded Logs panel
+//
+// Live view of this flow's `flow_run_events` right inside the
+// editor — polls `/api/flows/[id]/runs` every 4s while open so you
+// can watch a run advance without leaving the builder. Mirrors the
+// standalone `/flows/[id]/runs` page but stays collapsed-friendly
+// and compact.
+//
+// The endpoint returns the 50 most recent runs with their event
+// timeline pinned to `events` (already normalized to camelCase).
+// ============================================================
+
+interface LogsRunRow {
+  id: string;
+  status:
+    | "active"
+    | "completed"
+    | "handed_off"
+    | "timed_out"
+    | "paused_by_agent"
+    | "failed";
+  current_node_key: string | null;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+  reprompt_count: number;
+  contact: { id: string; name: string | null; phone: string } | null;
+}
+
+interface LogsEventRow {
+  flowRunId: string;
+  eventType: string;
+  nodeKey: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+const LOGS_EVENT_COLOR: Record<string, string> = {
+  started: "text-emerald-300",
+  node_entered: "text-slate-300",
+  message_sent: "text-sky-300",
+  reply_received: "text-primary",
+  fallback_fired: "text-amber-300",
+  handoff: "text-amber-300",
+  timeout: "text-slate-500",
+  error: "text-red-300",
+  completed: "text-emerald-300",
+};
+
+const LOGS_STATUS_META: Record<
+  LogsRunRow["status"],
+  { label: string; classes: string }
+> = {
+  active: {
+    label: "Active",
+    classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
+  },
+  completed: {
+    label: "Completed",
+    classes: "border-slate-700 bg-slate-800 text-slate-300",
+  },
+  handed_off: {
+    label: "Handed off",
+    classes: "border-amber-600/40 bg-amber-500/10 text-amber-300",
+  },
+  timed_out: {
+    label: "Timed out",
+    classes: "border-slate-700 bg-slate-800/60 text-slate-400",
+  },
+  paused_by_agent: {
+    label: "Paused by agent",
+    classes: "border-slate-700 bg-slate-800 text-slate-300",
+  },
+  failed: {
+    label: "Failed",
+    classes: "border-red-600/40 bg-red-500/10 text-red-300",
+  },
+};
+
+function FlowLogsPanel({ flowId }: { flowId: string }) {
+  const [open, setOpen] = useState(false);
+  const [runs, setRuns] = useState<LogsRunRow[]>([]);
+  const [events, setEvents] = useState<LogsEventRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errored, setErrored] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Poll while the panel is open. 4s gives a live feel without spamming
+  // the API while the user is just editing nodes.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/flows/${flowId}/runs`);
+        if (!res.ok) throw new Error(`Failed: ${res.status}`);
+        const json = (await res.json()) as {
+          runs?: LogsRunRow[];
+          events?: LogsEventRow[];
+        };
+        if (cancelled) return;
+        setRuns(json.runs ?? []);
+        setEvents(json.events ?? []);
+        setErrored(false);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[flows-logs] poll failed:", err);
+        setErrored(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    setLoading(true);
+    poll();
+    timer = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [open, flowId]);
+
+  const totalRuns = runs.length;
+  const activeRuns = runs.filter((r) => r.status === "active").length;
+
+  const toggleRun = useCallback((runId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+      >
+        <History className="h-4 w-4 shrink-0 text-primary" />
+        <span className="text-sm font-semibold text-white">Logs</span>
+        {open && loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />}
+        {!loading && totalRuns > 0 && (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+              {totalRuns} {totalRuns === 1 ? "run" : "runs"}
+            </span>
+            {activeRuns > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                {activeRuns} active
+              </span>
+            )}
+          </span>
+        )}
+        {open ? (
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-slate-500" />
+        ) : (
+          <ChevronUp className="ml-auto h-4 w-4 shrink-0 text-slate-500" />
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-800 px-4 py-3">
+          {errored && (
+            <p className="text-xs text-red-300">
+              Couldn&apos;t load logs. The flow may have been deleted or the
+              runs API failed.
+            </p>
+          )}
+          {!errored && runs.length === 0 && (
+            <p className="rounded-md border border-dashed border-slate-700 bg-slate-950/50 px-3 py-4 text-center text-xs text-slate-400">
+              No runs yet. Activate the flow and message the connected WhatsApp
+              number — every node entry, message send, and reply tap will show
+              up here.
+            </p>
+          )}
+          {runs.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {runs.map((run) => {
+                const runEvents = events.filter((e) => e.flowRunId === run.id);
+                const meta = LOGS_STATUS_META[run.status];
+                const contactLabel =
+                  run.contact?.name?.trim() || run.contact?.phone || "Unknown";
+                return (
+                  <div
+                    key={run.id}
+                    className="rounded-md border border-slate-800 bg-slate-950"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleRun(run.id)}
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left"
+                    >
+                      {expanded.has(run.id) ? (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-white">
+                        {contactLabel}
+                      </span>
+                      <Badge variant="outline" className={cn("gap-1 text-[10px]", meta.classes)}>
+                        {meta.label}
+                      </Badge>
+                      <span className="shrink-0 text-[10px] text-slate-500">
+                        {formatLogTime(run.started_at)}
+                      </span>
+                    </button>
+                    {expanded.has(run.id) && (
+                      <div className="flex flex-col gap-0.5 border-t border-slate-800 px-3 py-2">
+                        {runEvents.length === 0 ? (
+                          <p className="text-[11px] text-slate-500">
+                            No events recorded for this run.
+                          </p>
+                        ) : (
+                          runEvents.map((ev, ix) => (
+                            <div
+                              key={ix}
+                              className="flex items-start gap-2 rounded px-1 py-0.5 text-[11px]"
+                            >
+                              <span className="w-16 shrink-0 text-[9px] tabular-nums text-slate-500">
+                                {formatLogClock(ev.createdAt)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "w-28 shrink-0 font-mono text-[10px]",
+                                  LOGS_EVENT_COLOR[ev.eventType] ?? "text-slate-400",
+                                )}
+                              >
+                                {ev.eventType}
+                              </span>
+                              {ev.nodeKey && (
+                                <code className="shrink-0 rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-400">
+                                  {ev.nodeKey}
+                                </code>
+                              )}
+                              {Object.keys(ev.payload).length > 0 && (
+                                <span className="min-w-0 truncate text-[10px] text-slate-500">
+                                  {summarizeLogPayload(ev.payload)}
+                                </span>
+                              )}
+                            </div>
+                          ))
+                        )}
+                        {run.status === "active" && run.current_node_key && (
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            Waiting for reply at{" "}
+                            <code className="rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-400">
+                              {run.current_node_key}
+                            </code>
+                          </p>
+                        )}
+                        {(run.status === "completed" ||
+                          run.status === "handed_off" ||
+                          run.status === "failed" ||
+                          run.status === "timed_out") &&
+                          run.end_reason && (
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              End:{" "}
+                              <code className="rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-400">
+                                {run.end_reason}
+                              </code>
+                            </p>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatLogTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatLogClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function summarizeLogPayload(payload: Record<string, unknown>): string {
+  const keys = ["reply_id", "captured_key", "reason", "advancing_to", "action", "note"];
+  for (const k of keys) {
+    if (k in payload && payload[k] !== null && payload[k] !== undefined) {
+      return `${k}=${String(payload[k]).slice(0, 80)}`;
+    }
+  }
+  return "";
 }
 
 // ============================================================
@@ -1649,10 +1961,18 @@ function ConditionForm({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/tags").catch(() => null);
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "tags",
+            order: { column: "name" },
+          }),
+        }).catch(() => null);
         if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
+        const json = (await res.json()) as { data?: UserTag[] };
+        if (!cancelled) setTags(json.data ?? []);
       } catch {
         // Tags endpoint absent on older deployments — fall back to a
         // plain text input so the condition is still authorable.
@@ -1819,10 +2139,18 @@ function SetTagForm({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/tags").catch(() => null);
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "select",
+            table: "tags",
+            order: { column: "name" },
+          }),
+        }).catch(() => null);
         if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
+        const json = (await res.json()) as { data?: UserTag[] };
+        if (!cancelled) setTags(json.data ?? []);
       } catch {
         // No tags endpoint — fall back to raw UUID input.
       }
