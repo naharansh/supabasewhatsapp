@@ -258,6 +258,23 @@ export interface FlowFallbackPolicy {
   on_exhaust: "handoff" | "end";
 }
 
+// ============================================================
+// Error payload contract (flow_run_events.event_type='error')
+// ============================================================
+//
+// Every run-scoped failure is written by `recordFlowError` (see
+// `src/lib/flows/logging.ts`) as a `flow_run_events.error` row whose
+// payload follows a stable shape:
+//
+//   { code: string; message: string; detail: string; meta_message_id?: string }
+//
+// `code` is a stable machine-readable identifier (e.g. 'HANDOFF_FAILED',
+// 'SEND_BUTTONS_FAILED', 'MISSING_NEXT_NODE', 'ENGINE_THREW') used for
+// filtering in the flows error log. `message` is a short human summary;
+// `detail` carries the stack / Postgres details. The same shape is
+// mirrored into `flow_error_logs` (migration 025) which also covers
+// pre-run failures that have no run id to attach to.
+
 export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
   on_unknown_reply: "reprompt",
   max_reprompts: 2,

@@ -13,6 +13,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordFlowError } from './logging'
 
 interface SendTextEngineArgs {
   userId: string
@@ -26,11 +27,14 @@ export async function engineSendText(
 ): Promise<{ whatsapp_message_id: string }> {
   const admin = createAdminClient()
 
-  const { data: contact } = await admin.from('contacts')
+  const { data: contact, error: contactErr } = await admin.from('contacts')
     .select('id, phone')
     .match({ id: args.contactId, user_id: args.userId })
     .maybeSingle()
 
+  if (contactErr) {
+    throw new Error(`contact lookup failed: ${contactErr.message}`)
+  }
   if (!contact?.phone) {
     throw new Error('contact not found for this user')
   }
@@ -40,11 +44,14 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config } = await admin.from('whatsapp_config')
+  const { data: config, error: configErr } = await admin.from('whatsapp_config')
     .select('*')
     .eq('user_id', args.userId)
     .single()
 
+  if (configErr) {
+    throw new Error(`whatsapp_config lookup failed: ${configErr.message}`)
+  }
   if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -83,24 +90,45 @@ export async function engineSendText(
     await admin.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
-  try {
-    await admin.from('messages').insert({
-      conversation_id: args.conversationId,
-      sender_type: 'bot',
-      content_type: 'text',
-      content_text: args.text,
-      message_id: waMessageId,
-      status: 'sent',
-    }).select().single()
-  } catch (msgErr) {
-    throw new Error(`sent to Meta but DB insert failed: ${(msgErr as Error).message}`)
+  // Non-fatal: the message already reached Meta. A failed persistence here
+  // means the bubble is missing from the thread, but failing the run would
+  // strand the customer mid-conversation — log loudly instead.
+  const { error: msgErr } = await admin.from('messages').insert({
+    conversation_id: args.conversationId,
+    sender_type: 'bot',
+    content_type: 'text',
+    content_text: args.text,
+    message_id: waMessageId,
+    status: 'sent',
+  }).select().single()
+  if (msgErr) {
+    await recordFlowError({
+      userId: args.userId,
+      contactId: args.contactId,
+      conversationId: args.conversationId,
+      code: 'MESSAGE_INSERT_FAILED',
+      message: 'bot text message insert failed after Meta send',
+      detail: msgErr.message,
+      extra: { whatsapp_message_id: waMessageId, phone: workingPhone, content_type: 'text' },
+    })
   }
 
-  await admin.from('conversations').update({
+  const { error: convErr } = await admin.from('conversations').update({
     last_message_text: args.text,
     last_message_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', args.conversationId)
+  if (convErr) {
+    await recordFlowError({
+      userId: args.userId,
+      contactId: args.contactId,
+      conversationId: args.conversationId,
+      code: 'CONVERSATION_UPDATE_FAILED',
+      message: 'conversations.update(last_message) failed',
+      detail: convErr.message,
+      extra: { whatsapp_message_id: waMessageId },
+    })
+  }
 
   return { whatsapp_message_id: waMessageId }
 }
@@ -147,11 +175,14 @@ async function sendInteractiveViaMeta(
 ): Promise<{ whatsapp_message_id: string }> {
   const admin = createAdminClient()
 
-  const { data: contact } = await admin.from('contacts')
+  const { data: contact, error: contactErr } = await admin.from('contacts')
     .select('id, phone')
     .match({ id: input.contactId, user_id: input.userId })
     .maybeSingle()
 
+  if (contactErr) {
+    throw new Error(`contact lookup failed: ${contactErr.message}`)
+  }
   if (!contact?.phone) {
     throw new Error('contact not found for this user')
   }
@@ -161,11 +192,14 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config } = await admin.from('whatsapp_config')
+  const { data: config, error: configErr } = await admin.from('whatsapp_config')
     .select('*')
     .eq('user_id', input.userId)
     .single()
 
+  if (configErr) {
+    throw new Error(`whatsapp_config lookup failed: ${configErr.message}`)
+  }
   if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -220,24 +254,45 @@ async function sendInteractiveViaMeta(
     await admin.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
-  try {
-    await admin.from('messages').insert({
-      conversation_id: input.conversationId,
-      sender_type: 'bot',
-      content_type: 'interactive',
-      content_text: input.bodyText,
-      message_id: waMessageId,
-      status: 'sent',
-    }).select().single()
-  } catch (msgErr) {
-    throw new Error(`sent to Meta but DB insert failed: ${(msgErr as Error).message}`)
+  // Non-fatal: the message already reached Meta. A failed persistence here
+  // means the bubble is missing from the thread, but failing the run would
+  // strand the customer mid-conversation — log loudly instead.
+  const { error: msgErr } = await admin.from('messages').insert({
+    conversation_id: input.conversationId,
+    sender_type: 'bot',
+    content_type: 'interactive',
+    content_text: input.bodyText,
+    message_id: waMessageId,
+    status: 'sent',
+  }).select().single()
+  if (msgErr) {
+    await recordFlowError({
+      userId: input.userId,
+      contactId: input.contactId,
+      conversationId: input.conversationId,
+      code: 'MESSAGE_INSERT_FAILED',
+      message: 'bot interactive message insert failed after Meta send',
+      detail: msgErr.message,
+      extra: { whatsapp_message_id: waMessageId, phone: workingPhone, content_type: 'interactive', kind: input.kind },
+    })
   }
 
-  await admin.from('conversations').update({
+  const { error: convErr } = await admin.from('conversations').update({
     last_message_text: input.bodyText,
     last_message_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', input.conversationId)
+  if (convErr) {
+    await recordFlowError({
+      userId: input.userId,
+      contactId: input.contactId,
+      conversationId: input.conversationId,
+      code: 'CONVERSATION_UPDATE_FAILED',
+      message: 'conversations.update(last_message) failed',
+      detail: convErr.message,
+      extra: { whatsapp_message_id: waMessageId },
+    })
+  }
 
   return { whatsapp_message_id: waMessageId }
 }

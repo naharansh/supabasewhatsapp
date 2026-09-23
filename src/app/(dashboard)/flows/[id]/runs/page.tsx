@@ -185,6 +185,14 @@ export default function FlowRunsPage() {
         The 50 most recent times this flow ran. Expand a row to see the engine&apos;s
         per-step log.
       </p>
+      {(runs.some((r) => r.status === "failed") ||
+        events.some((e) => e.event_type === "error")) && (
+        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-red-600/40 bg-red-500/10 px-2.5 py-0.5 text-[11px] text-red-300">
+          <CircleAlert className="h-3 w-3" />
+          {runs.filter((r) => r.status === "failed").length} failed runs ·{" "}
+          {events.filter((e) => e.event_type === "error").length} error events
+        </p>
+      )}
 
       {runs.length === 0 ? (
         <div className="mt-6 rounded-lg border border-dashed border-slate-700 bg-slate-900/50 px-6 py-12 text-center text-sm text-slate-400">
@@ -330,10 +338,12 @@ function EventLine({ ev }: { ev: EventRow }) {
 function summarizePayload(payload: Record<string, unknown>): string {
   // Show the keys that matter most to a human debugger; full JSON is
   // available via the "Captured vars" details panel for the run.
-  const keys = ["reply_id", "captured_key", "reason", "advancing_to"];
+  const keys = ["code", "message", "reply_id", "captured_key", "reason", "advancing_to"];
   for (const k of keys) {
     if (k in payload && payload[k] !== null && payload[k] !== undefined) {
-      return `${k}=${String(payload[k]).slice(0, 80)}`;
+      const v = String(payload[k]);
+      if (v.length > 80) return `${k}=${v.slice(0, 77)}…`;
+      return `${k}=${v}`;
     }
   }
   return "";

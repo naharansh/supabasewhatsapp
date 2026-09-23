@@ -609,6 +609,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         canActivate={canActivate}
         onBack={() => router.push("/flows")}
         onViewRuns={() => router.push(`/flows/${initialFlow.id}/runs`)}
+        onViewErrors={() => router.push(`/flows/${initialFlow.id}/errors`)}
       />
 
       <TriggerPanel
@@ -799,6 +800,8 @@ function FlowLogsPanel({ flowId }: { flowId: string }) {
 
   const totalRuns = runs.length;
   const activeRuns = runs.filter((r) => r.status === "active").length;
+  const failedRuns = runs.filter((r) => r.status === "failed").length;
+  const errorEvents = events.filter((e) => e.eventType === "error").length;
 
   const toggleRun = useCallback((runId: string) => {
     setExpanded((prev) => {
@@ -827,6 +830,11 @@ function FlowLogsPanel({ flowId }: { flowId: string }) {
             {activeRuns > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
                 {activeRuns} active
+              </span>
+            )}
+            {(failedRuns > 0 || errorEvents > 0) && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-red-600/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-300">
+                {failedRuns} failed · {errorEvents} error{errorEvents === 1 ? "" : "s"}
               </span>
             )}
           </span>
@@ -972,10 +980,12 @@ function formatLogClock(iso: string): string {
 }
 
 function summarizeLogPayload(payload: Record<string, unknown>): string {
-  const keys = ["reply_id", "captured_key", "reason", "advancing_to", "action", "note"];
+  const keys = ["code", "message", "reply_id", "captured_key", "reason", "advancing_to", "action", "note"];
   for (const k of keys) {
     if (k in payload && payload[k] !== null && payload[k] !== undefined) {
-      return `${k}=${String(payload[k]).slice(0, 80)}`;
+      const v = String(payload[k]);
+      if (v.length > 120) return `${k}=${v.slice(0, 117)}…`;
+      return `${k}=${v}`;
     }
   }
   return "";
@@ -997,6 +1007,7 @@ function Header({
   canActivate,
   onBack,
   onViewRuns,
+  onViewErrors,
 }: {
   state: BuilderState;
   setState: React.Dispatch<React.SetStateAction<BuilderState>>;
@@ -1009,6 +1020,7 @@ function Header({
   canActivate: boolean;
   onBack: () => void;
   onViewRuns: () => void;
+  onViewErrors: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -1053,6 +1065,15 @@ function Header({
           >
             <History className="h-3.5 w-3.5" />
             Runs
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onViewErrors()}
+            className="text-red-300 hover:bg-red-500/10 hover:text-red-300"
+          >
+            <CircleAlert className="h-3.5 w-3.5" />
+            Errors
           </Button>
           <Button
             variant="ghost"

@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordFlowError, normalizeError } from "./logging";
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
@@ -125,11 +126,21 @@ async function loadActiveRunForContact(
   endReason: string | null;
 } | null> {
   const admin = createAdminClient()
-  const { data: rows } = await admin.from('flow_runs')
+  const { data: rows, error } = await admin.from('flow_runs')
     .select('*')
     .match({ user_id: userId, contact_id: contactId, status: "active" })
     .order('started_at', { ascending: false })
     .limit(1)
+  if (error) {
+    await recordFlowError({
+      userId,
+      contactId,
+      code: "LOAD_ACTIVE_RUN_FAILED",
+      message: "flow_runs.select failed while loading the active run",
+      detail: error.message,
+      extra: { status: "active" },
+    });
+  }
   if (!rows || !rows.length) return null;
   const r = rows[0];
   return {
@@ -150,7 +161,7 @@ async function loadActiveRunForContact(
   };
 }
 
-async function loadFlow(flowId: string): Promise<{
+async function loadFlow(flowId: string, userId?: string): Promise<{
   id: string;
   userId: string;
   entryNodeId: string | null;
@@ -158,7 +169,20 @@ async function loadFlow(flowId: string): Promise<{
   triggerType: string;
 } | null> {
   const admin = createAdminClient()
-  const { data: flow } = await admin.from('flows').select('*').eq('id', flowId).single();
+  const { data: flow, error } = await admin.from('flows').select('*').eq('id', flowId).single();
+  if (error) {
+    if (userId) {
+      await recordFlowError({
+        userId,
+        flowId,
+        code: "LOAD_FLOW_FAILED",
+        message: "flows.select failed",
+        detail: error.message,
+      });
+    } else {
+      console.error("[flows] LOAD_FLOW_FAILED", { flowId, detail: error.message });
+    }
+  }
   if (!flow) return null;
   return {
     id: flow.id,
@@ -171,9 +195,23 @@ async function loadFlow(flowId: string): Promise<{
 
 async function loadAllNodes(
   flowId: string,
+  userId?: string,
 ): Promise<Map<string, { node_key: string; node_type: string; config: Record<string, unknown> }>> {
   const admin = createAdminClient()
-  const { data } = await admin.from('flow_nodes').select('*').eq('flow_id', flowId);
+  const { data, error } = await admin.from('flow_nodes').select('*').eq('flow_id', flowId);
+  if (error) {
+    if (userId) {
+      await recordFlowError({
+        userId,
+        flowId,
+        code: "LOAD_NODES_FAILED",
+        message: "flow_nodes.select failed",
+        detail: error.message,
+      });
+    } else {
+      console.error("[flows] LOAD_NODES_FAILED", { flowId, detail: error.message });
+    }
+  }
   const map = new Map<string, { node_key: string; node_type: string; config: Record<string, unknown> }>();
   for (const row of (data ?? [])) {
     map.set(row.node_key, {
@@ -250,10 +288,19 @@ async function findEntryFlow(
   if (message.kind !== "text") return null;
 
   const admin = createAdminClient()
-  const { data: flows } = await admin.from('flows')
+  const { data: flows, error } = await admin.from('flows')
     .select('*')
     .match({ user_id: userId, status: "active" })
     .order('created_at', { ascending: true });
+  if (error) {
+    await recordFlowError({
+      userId,
+      code: "FIND_ENTRY_FLOW_FAILED",
+      message: "flows.select failed while finding a trigger match",
+      detail: error.message,
+      extra: { is_first_inbound: isFirstInbound, trigger_type: "keyword/first_inbound" },
+    });
+  }
   if (!flows || !flows.length) return null;
 
   for (const flow of flows) {
@@ -447,16 +494,28 @@ async function advanceFromNodeKey(
   let currentKey: string | null = startNodeKey;
   for (let safety = 0; safety < 64; safety += 1) {
     if (!currentKey) {
-      await logEvent(run.id, "error", null, {
-        reason: "next_node_key was null mid-advance",
+      await recordFlowError({
+        runId: run.id,
+        userId: run.user_id,
+        contactId: run.contact_id,
+        conversationId: run.conversation_id,
+        nodeKey: null,
+        code: "MISSING_NEXT_NODE",
+        message: "next_node_key was null mid-advance",
       });
       await endRun(run.id, "failed", "missing_next_node");
       return { outcome: "completed" };
     }
     const node: { node_key: string; node_type: string; config: Record<string, unknown> } | null = nodes.get(currentKey) ?? null;
     if (!node) {
-      await logEvent(run.id, "error", currentKey, {
-        reason: "node_not_found",
+      await recordFlowError({
+        runId: run.id,
+        userId: run.user_id,
+        contactId: run.contact_id,
+        conversationId: run.conversation_id,
+        nodeKey: currentKey,
+        code: "NODE_NOT_FOUND",
+        message: `node not found in flow_nodes: ${currentKey}`,
       });
       await endRun(run.id, "failed", "node_not_found");
       return { outcome: "completed" };
@@ -483,9 +542,17 @@ async function advanceFromNodeKey(
           whatsapp_message_id,
         });
       } catch (err) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "send_text_failed",
-          detail: err instanceof Error ? err.message : String(err),
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "SEND_MESSAGE_FAILED",
+          message: "engineSendText failed",
+          detail,
+          extra: { cause: message },
         });
         await endRun(run.id, "failed", "send_text_failed");
         return { outcome: "completed" };
@@ -515,9 +582,17 @@ async function advanceFromNodeKey(
           last_prompt_message_id: msg?.id ?? null,
         }).eq('id', run.id);
       } catch (err) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "collect_input_prompt_failed",
-          detail: err instanceof Error ? err.message : String(err),
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "COLLECT_INPUT_PROMPT_FAILED",
+          message: "collect_input prompt send failed",
+          detail,
+          extra: { cause: message },
         });
         await endRun(run.id, "failed", "collect_input_prompt_failed");
         return { outcome: "completed" };
@@ -528,8 +603,14 @@ async function advanceFromNodeKey(
         node.node_key,
       );
       if (!advanced) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "lost_race_during_advance",
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "LOST_RACE_DURING_ADVANCE",
+          message: "advanceCurrentNodeKey matched no active row",
         });
       }
       return { outcome: "advanced" };
@@ -545,9 +626,17 @@ async function advanceFromNodeKey(
           ? "true"
           : "false";
       } catch (err) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "condition_evaluation_failed",
-          detail: err instanceof Error ? err.message : String(err),
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "CONDITION_EVALUATION_FAILED",
+          message: "condition evaluation failed",
+          detail,
+          extra: { cause: message },
         });
         await endRun(run.id, "failed", "condition_evaluation_failed");
         return { outcome: "completed" };
@@ -576,47 +665,117 @@ async function advanceFromNodeKey(
           });
         }
       } catch (err) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "set_tag_failed",
-          detail: err instanceof Error ? err.message : String(err),
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "SET_TAG_FAILED",
+          message: "set_tag upsert/delete failed",
+          detail,
+          extra: { cause: message, mode: cfg.mode, tag_id: cfg.tag_id },
         });
       }
       currentKey = cfg.next_node_key;
       continue;
     }
     if (node.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(run, node);
+      try {
+        await sendButtonsAndSuspend(run, node);
+      } catch (err) {
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "SEND_BUTTONS_FAILED",
+          message: "send_buttons node failed",
+          detail,
+          extra: { cause: message },
+        });
+        await endRun(run.id, "failed", "send_buttons_failed");
+        return { outcome: "advanced" };
+      }
       const advanced = await advanceCurrentNodeKey(
         run.id,
         run.current_node_key,
         node.node_key,
       );
       if (!advanced) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "lost_race_during_advance",
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "LOST_RACE_DURING_ADVANCE",
+          message: "advanceCurrentNodeKey matched no active row",
         });
       }
       return { outcome: "advanced" };
     }
     if (node.node_type === "send_list") {
-      await sendListAndSuspend(run, node);
+      try {
+        await sendListAndSuspend(run, node);
+      } catch (err) {
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "SEND_LIST_FAILED",
+          message: "send_list node failed",
+          detail,
+          extra: { cause: message },
+        });
+        await endRun(run.id, "failed", "send_list_failed");
+        return { outcome: "advanced" };
+      }
       const advanced = await advanceCurrentNodeKey(
         run.id,
         run.current_node_key,
         node.node_key,
       );
       if (!advanced) {
-        await logEvent(run.id, "error", node.node_key, {
-          reason: "lost_race_during_advance",
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "LOST_RACE_DURING_ADVANCE",
+          message: "advanceCurrentNodeKey matched no active row",
         });
       }
       return { outcome: "advanced" };
     }
     if (node.node_type === "handoff") {
-      await executeHandoff(
-        { id: run.id, conversationId: run.conversation_id },
-        node,
-      );
+      try {
+        await executeHandoff(
+          { id: run.id, conversationId: run.conversation_id },
+          node,
+        );
+      } catch (err) {
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "HANDOFF_FAILED",
+          message: "handoff node failed",
+          detail,
+          extra: { cause: message },
+        });
+        await endRun(run.id, "failed", "handoff_error");
+      }
       return { outcome: "handed_off" };
     }
     if (node.node_type === "end") {
@@ -624,14 +783,26 @@ async function advanceFromNodeKey(
       await endRun(run.id, "completed", "end_node");
       return { outcome: "completed" };
     }
-    await logEvent(run.id, "error", node.node_key, {
-      reason: `unknown_node_type:${node.node_type}`,
+    await recordFlowError({
+      runId: run.id,
+      userId: run.user_id,
+      contactId: run.contact_id,
+      conversationId: run.conversation_id,
+      nodeKey: node.node_key,
+      code: "UNKNOWN_NODE_TYPE",
+      message: `unknown node_type: ${node.node_type}`,
     });
     await endRun(run.id, "failed", "unknown_node_type");
     return { outcome: "completed" };
   }
-  await logEvent(run.id, "error", currentKey, {
-    reason: "advance_loop_safety_break",
+  await recordFlowError({
+    runId: run.id,
+    userId: run.user_id,
+    contactId: run.contact_id,
+    conversationId: run.conversation_id,
+    nodeKey: currentKey,
+    code: "ADVANCE_LOOP_OVERFLOW",
+    message: "advance loop hit safety break after 64 iterations",
   });
   await endRun(run.id, "failed", "advance_loop_overflow");
   return { outcome: "completed" };
@@ -689,7 +860,7 @@ export async function dispatchInboundToFlows(
           outcome: "duplicate_inbound_ignored",
         };
       }
-      const nodes = await loadAllNodes(activeRun.flowId);
+      const nodes = await loadAllNodes(activeRun.flowId, input.userId);
       return handleReplyForActiveRun(activeRun, input.message, nodes);
     }
 
@@ -701,12 +872,22 @@ export async function dispatchInboundToFlows(
     if (!flow || !flow.entryNodeId) {
       return { consumed: false, outcome: "no_match" };
     }
-    const nodes = await loadAllNodes(flow.id);
+    const nodes = await loadAllNodes(flow.id, input.userId);
     return startNewRun(flow, input, nodes);
   } catch (err) {
+    const { message, detail } = normalizeError(err);
+    await recordFlowError({
+      userId: input.userId,
+      contactId: input.contactId,
+      conversationId: input.conversationId,
+      metaMessageId: input.message.meta_message_id,
+      code: "ENGINE_THREW",
+      message,
+      detail,
+    });
     console.error(
       "[flows] dispatchInboundToFlows threw:",
-      err instanceof Error ? err.message : err,
+      message,
     );
     return { consumed: false, outcome: "no_match" };
   }
@@ -736,6 +917,14 @@ async function handleReplyForActiveRun(
   });
 
   if (!run.currentNodeKey) {
+    await recordFlowError({
+      runId: run.id,
+      userId: run.userId,
+      contactId: run.contactId,
+      conversationId: run.conversationId,
+      code: "ACTIVE_RUN_MISSING_NEXT_NODE",
+      message: "active run has no current_node_key",
+    });
     await endRun(run.id, "failed", "active_run_missing_current_node");
     return {
       consumed: true,
@@ -746,6 +935,15 @@ async function handleReplyForActiveRun(
 
   const currentNode = nodes.get(run.currentNodeKey) ?? null;
   if (!currentNode) {
+    await recordFlowError({
+      runId: run.id,
+      userId: run.userId,
+      contactId: run.contactId,
+      conversationId: run.conversationId,
+      nodeKey: run.currentNodeKey,
+      code: "CURRENT_NODE_NOT_FOUND",
+      message: `current node not found in flow_nodes: ${run.currentNodeKey}`,
+    });
     await endRun(run.id, "failed", "current_node_not_found");
     return { consumed: true, flow_run_id: run.id, outcome: "no_match" };
   }
@@ -778,8 +976,20 @@ async function handleReplyForActiveRun(
           captured_length: captured.length,
         });
         matched = cfg.next_node_key;
-      } catch {
+      } catch (err) {
         // Supabase threw — the capture failed; fall through to fallback.
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.userId,
+          contactId: run.contactId,
+          conversationId: run.conversationId,
+          nodeKey: currentNode.node_key,
+          code: "COLLECT_INPUT_CAPTURE_FAILED",
+          message: "could not persist captured var",
+          detail,
+          extra: { cause: message, var_key: cfg.var_key },
+        });
       }
     }
   }
@@ -816,7 +1026,7 @@ async function handleReplyForActiveRun(
   }
 
   // No match → fallback. Apply the policy.
-  const flowRecord = await loadFlow(run.flowId);
+  const flowRecord = await loadFlow(run.flowId, run.userId);
   const policy = resolveFallbackPolicy(
     flowRecord?.fallbackPolicy as
       | { on_unknown_reply?: string; max_reprompts?: number; on_timeout_hours?: number; on_exhaust?: string }
@@ -837,39 +1047,62 @@ async function handleReplyForActiveRun(
     return { consumed: false, flow_run_id: run.id, outcome: "no_match" };
   }
   if (action.type === "reprompt") {
-    if (currentNode.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(
-        { id: run.id, user_id: run.userId, conversation_id: run.conversationId!, contact_id: run.contactId! },
-        currentNode,
-      );
-    } else if (currentNode.node_type === "send_list") {
-      await sendListAndSuspend(
-        { id: run.id, user_id: run.userId, conversation_id: run.conversationId!, contact_id: run.contactId! },
-        currentNode,
-      );
-    } else if (currentNode.node_type === "collect_input") {
-      const cfg = currentNode.config as unknown as CollectInputNodeConfig;
-      try {
+    try {
+      if (currentNode.node_type === "send_buttons") {
+        await sendButtonsAndSuspend(
+          { id: run.id, user_id: run.userId, conversation_id: run.conversationId!, contact_id: run.contactId! },
+          currentNode,
+        );
+      } else if (currentNode.node_type === "send_list") {
+        await sendListAndSuspend(
+          { id: run.id, user_id: run.userId, conversation_id: run.conversationId!, contact_id: run.contactId! },
+          currentNode,
+        );
+      } else if (currentNode.node_type === "collect_input") {
+        const cfg = currentNode.config as unknown as CollectInputNodeConfig;
         await engineSendText({
           userId: run.userId,
           conversationId: run.conversationId!,
           contactId: run.contactId!,
           text: interpolateVars(cfg.prompt_text, run.vars),
         });
-      } catch (err) {
-        await logEvent(run.id, "error", currentNode.node_key, {
-          reason: "reprompt_send_failed",
-          detail: err instanceof Error ? err.message : String(err),
-        });
       }
+    } catch (err) {
+      const { message, detail } = normalizeError(err);
+      await recordFlowError({
+        runId: run.id,
+        userId: run.userId,
+        contactId: run.contactId,
+        conversationId: run.conversationId,
+        nodeKey: currentNode.node_key,
+        code: "REPROMPT_SEND_FAILED",
+        message: "reprompt re-send failed",
+        detail,
+        extra: { cause: message },
+      });
     }
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
     if (run.conversationId) {
-      await admin.from('conversations').update({
-        status: "pending",
-      }).eq('id', run.conversationId);
+      try {
+        await admin.from('conversations').update({
+          status: "pending",
+        }).eq('id', run.conversationId);
+      } catch (err) {
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.userId,
+          contactId: run.contactId,
+          conversationId: run.conversationId,
+          nodeKey: run.currentNodeKey,
+          code: "HANDOFF_FAILED",
+          message: "conversations.update(status=pending) failed",
+          detail,
+          extra: { cause: message, reason: "fallback_exhausted" },
+        });
+      }
     }
     await logEvent(run.id, "handoff", run.currentNodeKey, {
       reason: "fallback_exhausted",
@@ -910,6 +1143,17 @@ async function startNewRun(
     if (err?.code === '23505') {
       return { consumed: true, outcome: "duplicate_inbound_ignored" };
     }
+    const { message, detail } = normalizeError(err as unknown);
+    await recordFlowError({
+      userId: flow.userId,
+      flowId: flow.id,
+      contactId: input.contactId,
+      conversationId: input.conversationId,
+      metaMessageId: input.message.meta_message_id,
+      code: "START_RUN_INSERT_FAILED",
+      message,
+      detail,
+    });
     console.error("[flows] startNewRun insert error:", err instanceof Error ? err.message : err);
     return { consumed: false, outcome: "no_match" };
   }
@@ -923,7 +1167,15 @@ async function startNewRun(
   try {
     await admin.rpc('increment_flow_execution_count', { p_flow_id: flow.id });
   } catch (incErr) {
-    console.error("[flows] execution_count increment error:", incErr instanceof Error ? incErr.message : incErr);
+    const { message, detail } = normalizeError(incErr);
+    await recordFlowError({
+      userId: flow.userId,
+      flowId: flow.id,
+      code: "INCREMENT_EXECUTION_COUNT_FAILED",
+      message: "increment_flow_execution_count rpc failed",
+      detail: message,
+      extra: { stack: detail },
+    });
   }
 
   const outcome = await advanceFromNodeKey(
