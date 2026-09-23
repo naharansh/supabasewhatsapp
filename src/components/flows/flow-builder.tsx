@@ -753,7 +753,7 @@ const LOGS_STATUS_META: Record<
 };
 
 function FlowLogsPanel({ flowId }: { flowId: string }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [runs, setRuns] = useState<LogsRunRow[]>([]);
   const [events, setEvents] = useState<LogsEventRow[]>([]);
   const [loading, setLoading] = useState(false);
