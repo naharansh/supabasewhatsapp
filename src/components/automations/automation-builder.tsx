@@ -155,7 +155,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case "condition":
       return { subject: "tag_presence", operand: "", value: "" }
     case "send_webhook":
-      return { url: "", headers: {}, body_template: "" }
+      return { url: "", method: "POST", headers: {}, body_template: "" }
     case "close_conversation":
       return {}
     default:
@@ -975,6 +975,19 @@ function StepEditor({
     case "send_webhook":
       return (
         <>
+          <FieldBlock label="Method">
+            <select
+              value={(cfg.method as string) ?? "POST"}
+              onChange={(e) => set({ method: e.target.value })}
+              className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white"
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </FieldBlock>
           <FieldBlock label="URL">
             <Input
               value={(cfg.url as string) ?? ""}

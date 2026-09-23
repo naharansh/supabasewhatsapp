@@ -412,11 +412,13 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
+      const method = (cfg.method ?? 'POST').toUpperCase()
       const body = cfg.body_template ? interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const hasBody = method !== 'GET' && method !== 'HEAD'
       const res = await fetch(cfg.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
-        body,
+        method,
+        headers: hasBody ? { 'content-type': 'application/json', ...(cfg.headers ?? {}) } : cfg.headers,
+        ...(hasBody ? { body } : {}),
       })
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)
       return `webhook ${res.status}`

@@ -349,6 +349,7 @@ export interface ConditionStepConfig {
 
 export interface SendWebhookStepConfig {
   url: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
   body_template?: string;
 }

@@ -92,6 +92,26 @@ describe("validateStepsForActivation", () => {
     );
   });
 
+  it("validates webhook methods", () => {
+    const good = validateStepsForActivation([
+      {
+        step_type: "send_webhook",
+        step_config: { url: "https://hooks.example.com/in", method: "GET" },
+      },
+    ]);
+    expect(good).toEqual([]);
+
+    const bad = validateStepsForActivation([
+      {
+        step_type: "send_webhook",
+        step_config: { url: "https://hooks.example.com/in", method: "TRACE" },
+      },
+    ]);
+    expect(bad.map((i) => i.message)).toContain(
+      "webhook method must be GET, POST, PUT, PATCH, or DELETE",
+    );
+  });
+
   it("validates assign_conversation only when mode is 'specific'", () => {
     const roundRobinNoAgent = validateStepsForActivation([
       {

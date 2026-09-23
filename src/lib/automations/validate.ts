@@ -131,6 +131,12 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
       } catch {
         issues.push({ path: `${path}.url`, message: 'webhook URL is not a valid URL' })
       }
+      if (c.method !== undefined && !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(String(c.method).toUpperCase())) {
+        issues.push({
+          path: `${path}.method`,
+          message: 'webhook method must be GET, POST, PUT, PATCH, or DELETE',
+        })
+      }
       break
     case 'close_conversation':
       // No config required.
