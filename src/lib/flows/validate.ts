@@ -242,6 +242,46 @@ function validateNode(
       break;
     }
 
+    case "text_area": {
+      const cfg = node.config as { text?: string; next_node_key?: string };
+      if (!cfg.text?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "text",
+          message: "Text-area node needs a text body.",
+        });
+      } else if (cfg.text.length > 4096) {
+        issues.push({
+          severity: "warning",
+          scope: "node",
+          node_key: node.node_key,
+          field: "text",
+          message:
+            "Text is longer than 4096 chars — it will be sent as multiple WhatsApp messages.",
+        });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: "Text-area node must point to a next node.",
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: `Text-area node points to non-existent node "${cfg.next_node_key}".`,
+        });
+      }
+      break;
+    }
+
     case "send_buttons": {
       const cfg = node.config as {
         text?: string;
@@ -690,6 +730,7 @@ function outgoingEdges(node: NodeInput): string[] {
   switch (node.node_type) {
     case "start":
     case "send_message":
+    case "text_area":
     case "collect_input":
     case "set_tag": {
       const cfg = node.config as { next_node_key?: string };

@@ -406,6 +406,89 @@ describe("validateFlowForActivation — nodes", () => {
     ).toBe(true);
   });
 
+  it("flags text_area without text", () => {
+    const nodes = [
+      { node_key: "s", node_type: "start", config: { next_node_key: "t" } },
+      { node_key: "t", node_type: "text_area", config: { text: "   " } },
+      { node_key: "h", node_type: "handoff", config: {} },
+    ];
+    const issues = validateFlowForActivation(
+      { ...validFlow, entry_node_id: "s" },
+      nodes,
+    );
+    expect(
+      issues.some(
+        (i) => i.node_key === "t" && i.field === "text" && i.severity === "error",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags text_area pointing at a missing next node", () => {
+    const nodes = [
+      { node_key: "s", node_type: "start", config: { next_node_key: "t" } },
+      {
+        node_key: "t",
+        node_type: "text_area",
+        config: { text: "hello", next_node_key: "ghost" },
+      },
+      { node_key: "h", node_type: "handoff", config: {} },
+    ];
+    const issues = validateFlowForActivation(
+      { ...validFlow, entry_node_id: "s" },
+      nodes,
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "t" &&
+          i.field === "next_node_key" &&
+          i.message.includes('"ghost"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns when text_area text exceeds 4096 chars (splits into multiple messages)", () => {
+    const nodes = [
+      { node_key: "s", node_type: "start", config: { next_node_key: "t" } },
+      {
+        node_key: "t",
+        node_type: "text_area",
+        config: { text: "a".repeat(5000), next_node_key: "h" },
+      },
+      { node_key: "h", node_type: "handoff", config: {} },
+    ];
+    const issues = validateFlowForActivation(
+      { ...validFlow, entry_node_id: "s" },
+      nodes,
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "t" &&
+          i.field === "text" &&
+          i.severity === "warning" &&
+          i.message.includes("4096"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a well-formed text_area node with no issues", () => {
+    const nodes = [
+      { node_key: "s", node_type: "start", config: { next_node_key: "t" } },
+      {
+        node_key: "t",
+        node_type: "text_area",
+        config: { text: "line1\nline2", next_node_key: "h" },
+      },
+      { node_key: "h", node_type: "handoff", config: {} },
+    ];
+    const issues = validateFlowForActivation(
+      { ...validFlow, entry_node_id: "s" },
+      nodes,
+    );
+    expect(issues).toEqual([]);
+  });
+
   it("doesn't crash on unknown node_type — flags it", () => {
     const nodes = [
       { node_key: "s", node_type: "wibble", config: {} },

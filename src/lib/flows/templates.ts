@@ -28,11 +28,13 @@ import type {
   SendListNodeConfig,
   SendMessageNodeConfig,
   StartNodeConfig,
+  TextAreaNodeConfig,
 } from "./types";
 
 export type FlowTemplateNodeType =
   | "start"
   | "send_message"
+  | "text_area"
   | "send_buttons"
   | "send_list"
   | "collect_input"
@@ -47,6 +49,7 @@ export interface FlowTemplateNode {
   config:
     | StartNodeConfig
     | SendMessageNodeConfig
+    | TextAreaNodeConfig
     | SendButtonsNodeConfig
     | SendListNodeConfig
     | CollectInputNodeConfig

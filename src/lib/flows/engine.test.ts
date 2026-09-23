@@ -6,6 +6,8 @@ import {
   isSuspending,
   isTerminal,
   evaluateConditionPredicate,
+  splitTextIntoChunks,
+  TEXT_MESSAGE_MAX_CHARS,
 } from "./engine";
 
 describe("matchReplyId", () => {
@@ -144,9 +146,10 @@ describe("matchesKeywordTrigger", () => {
 });
 
 describe("node classification helpers", () => {
-  it("isAutoAdvancing covers start + send_message + condition + set_tag", () => {
+  it("isAutoAdvancing covers start + send_message + text_area + condition + set_tag", () => {
     expect(isAutoAdvancing("start")).toBe(true);
     expect(isAutoAdvancing("send_message")).toBe(true);
+    expect(isAutoAdvancing("text_area")).toBe(true);
     expect(isAutoAdvancing("condition")).toBe(true);
     expect(isAutoAdvancing("set_tag")).toBe(true);
     expect(isAutoAdvancing("send_buttons")).toBe(false);
@@ -162,6 +165,7 @@ describe("node classification helpers", () => {
     expect(isSuspending("collect_input")).toBe(true);
     expect(isSuspending("start")).toBe(false);
     expect(isSuspending("send_message")).toBe(false);
+    expect(isSuspending("text_area")).toBe(false);
     expect(isSuspending("condition")).toBe(false);
     expect(isSuspending("set_tag")).toBe(false);
     expect(isSuspending("handoff")).toBe(false);
@@ -174,12 +178,14 @@ describe("node classification helpers", () => {
     expect(isTerminal("start")).toBe(false);
     expect(isTerminal("send_buttons")).toBe(false);
     expect(isTerminal("condition")).toBe(false);
+    expect(isTerminal("text_area")).toBe(false);
   });
 
   it("the three classifications are mutually exclusive for known node types", () => {
     const types = [
       "start",
       "send_message",
+      "text_area",
       "send_buttons",
       "send_list",
       "collect_input",
@@ -193,6 +199,38 @@ describe("node classification helpers", () => {
       // Exactly one of the three should be true for every known node.
       expect(flags.filter(Boolean).length).toBe(1);
     }
+  });
+});
+
+describe("splitTextIntoChunks", () => {
+  it("returns an empty array for empty text", () => {
+    expect(splitTextIntoChunks("")).toEqual([]);
+  });
+
+  it("keeps short text as a single chunk", () => {
+    expect(splitTextIntoChunks("hello world")).toEqual(["hello world"]);
+  });
+
+  it("splits multi-line lists at newline boundaries under the char cap", () => {
+    const lines = Array.from({ length: 1000 }, (_, i) => `item ${i}`).join("\n");
+    const chunks = splitTextIntoChunks(lines, 4096);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(4096);
+    // Rejoining with \n preserves the original content exactly.
+    expect(chunks.join("\n")).toBe(lines);
+  });
+
+  it("hard-splits a single line longer than the cap", () => {
+    const long = "a".repeat(4096 * 2 + 10);
+    const chunks = splitTextIntoChunks(long, 4096);
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toHaveLength(4096);
+    expect(chunks.join("")).toBe(long);
+  });
+
+  it("defaults to WhatsApp's 4096-char text limit", () => {
+    expect(TEXT_MESSAGE_MAX_CHARS).toBe(4096);
+    expect(splitTextIntoChunks("b".repeat(4097))).toHaveLength(2);
   });
 });
 

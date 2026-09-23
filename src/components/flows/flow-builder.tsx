@@ -33,6 +33,7 @@ import {
   MessageCircle,
   ListChecks,
   ListPlus,
+  AlignLeft,
   CornerDownRight,
   UserPlus,
   Flag,
@@ -82,6 +83,7 @@ interface FlowBuilderProps {
 type NodeType =
   | "start"
   | "send_message"
+  | "text_area"
   | "send_buttons"
   | "send_list"
   | "collect_input"
@@ -120,6 +122,11 @@ const NODE_META: Record<
     label: "Send message",
     icon: MessageCircle,
     color: "text-sky-400",
+  },
+  text_area: {
+    label: "Text area",
+    icon: AlignLeft,
+    color: "text-violet-400",
   },
   send_buttons: {
     label: "Send buttons",
@@ -193,6 +200,12 @@ function summarizeNode(node: BuilderNode): string | null {
     case "send_message": {
       const text = typeof cfg.text === "string" ? cfg.text : "";
       return text.length > 0 ? truncate(text) : null;
+    }
+    case "text_area": {
+      const text = typeof cfg.text === "string" ? cfg.text : "";
+      if (text.length === 0) return null;
+      const lineCount = text.trim().split(/\r?\n/).filter(Boolean).length;
+      return `${truncate(text, 60)} · ${lineCount} line${lineCount === 1 ? "" : "s"}`;
     }
     case "send_buttons": {
       const text = typeof cfg.text === "string" ? cfg.text : "";
@@ -283,6 +296,8 @@ function defaultConfigFor(type: NodeType): Record<string, unknown> {
     case "start":
       return { next_node_key: "" };
     case "send_message":
+      return { text: "", next_node_key: "" };
+    case "text_area":
       return { text: "", next_node_key: "" };
     case "send_buttons":
       return {
@@ -1446,6 +1461,35 @@ function NodeConfigForm({
         </>
       )}
 
+      {node.node_type === "text_area" && (
+        <>
+          <div>
+            <label className="mb-1 block text-xs text-slate-400">
+              Text sent to the customer (paste a large list — long messages are
+              split automatically)
+            </label>
+            <Textarea
+              value={(cfg as { text?: string }).text ?? ""}
+              onChange={(e) => onUpdateConfig({ text: e.target.value })}
+              rows={10}
+              className="bg-slate-800 font-mono text-xs"
+              placeholder={"Paste your list here…\n\nOne item per line."}
+            />
+            <p className="mt-1 text-[10px] text-slate-500">
+              WhatsApp caps a single text message at 4096 characters — text
+              longer than that is sent as multiple messages in order.
+            </p>
+          </div>
+          <NextNodeRow
+            value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onChange={(v) => onUpdateConfig({ next_node_key: v })}
+            label="Advances to"
+          />
+        </>
+      )}
+
       {node.node_type === "send_buttons" && (
         <SendButtonsForm
           cfg={cfg as SendButtonsCfg}
@@ -2355,6 +2399,7 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
     "send_buttons",
     "send_list",
     "send_message",
+    "text_area",
     "collect_input",
     "condition",
     "set_tag",

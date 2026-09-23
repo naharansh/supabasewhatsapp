@@ -17,8 +17,55 @@ import {
   type SendMessageNodeConfig,
   type SetTagNodeConfig,
   type StartNodeConfig,
+  type TextAreaNodeConfig,
   type KeywordTriggerConfig,
 } from "./types";
+
+/**
+ * WhatsApp's cap for a single text message body. Kept in the engine so
+ * `text_area` nodes can split long pasted lists across multiple messages.
+ */
+export const TEXT_MESSAGE_MAX_CHARS = 4096;
+
+/**
+ * Split long text into chunks of at most `maxChars`, preferring to break
+ * at newline boundaries so line-oriented lists stay readable. A single
+ * line longer than `maxChars` is hard-split. Pure — extracted for tests.
+ */
+export function splitTextIntoChunks(
+  text: string,
+  maxChars = TEXT_MESSAGE_MAX_CHARS,
+): string[] {
+  if (!text) return [];
+  if (text.length <= maxChars) return [text];
+
+  const chunks: string[] = [];
+  const lines = text.split(/\r?\n/);
+  let current = "";
+
+  const flush = () => {
+    if (current.length > 0) {
+      chunks.push(current);
+      current = "";
+    }
+  };
+
+  for (const line of lines) {
+    if (current.length > 0 && current.length + 1 + line.length > maxChars) {
+      flush();
+    }
+    if (line.length > maxChars) {
+      flush();
+      for (let i = 0; i < line.length; i += maxChars) {
+        chunks.push(line.slice(i, i + maxChars));
+      }
+      continue;
+    }
+    current = current.length === 0 ? line : `${current}\n${line}`;
+  }
+  flush();
+  return chunks;
+}
 
 // ============================================================
 // Pure helpers — extracted so engine.test.ts can exercise them
@@ -66,6 +113,7 @@ export function isAutoAdvancing(node_type: string): boolean {
   return (
     node_type === "start" ||
     node_type === "send_message" ||
+    node_type === "text_area" ||
     node_type === "condition" ||
     node_type === "set_tag"
   );
@@ -555,6 +603,43 @@ async function advanceFromNodeKey(
           extra: { cause: message },
         });
         await endRun(run.id, "failed", "send_text_failed");
+        return { outcome: "completed" };
+      }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "text_area") {
+      const cfg = node.config as unknown as TextAreaNodeConfig;
+      const chunks = splitTextIntoChunks(interpolateVars(cfg.text, run.vars));
+      try {
+        for (let i = 0; i < chunks.length; i += 1) {
+          const { whatsapp_message_id } = await engineSendText({
+            userId: run.user_id,
+            conversationId: run.conversation_id,
+            contactId: run.contact_id,
+            text: chunks[i],
+          });
+          await logEvent(run.id, "message_sent", node.node_key, {
+            node_type: "text_area",
+            whatsapp_message_id,
+            chunk: i + 1,
+            total_chunks: chunks.length,
+          });
+        }
+      } catch (err) {
+        const { message, detail } = normalizeError(err);
+        await recordFlowError({
+          runId: run.id,
+          userId: run.user_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          nodeKey: node.node_key,
+          code: "TEXT_AREA_SEND_FAILED",
+          message: "engineSendText failed for text_area node",
+          detail,
+          extra: { cause: message, total_chunks: chunks.length },
+        });
+        await endRun(run.id, "failed", "text_area_send_failed");
         return { outcome: "completed" };
       }
       currentKey = cfg.next_node_key;

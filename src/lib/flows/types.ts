@@ -34,6 +34,20 @@ export interface SendMessageNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Sends a large block of free-form text to the customer. Identical to
+ * `send_message` except the builder surfaces a big textarea for pasting
+ * long lists / multi-line content. When the text exceeds Meta's 4096-char
+ * single-message limit the runner splits it into multiple messages on
+ * line boundaries before advancing.
+ */
+export interface TextAreaNodeConfig {
+  /** Large multi-line text sent to the customer; can interpolate {{vars.X}}. */
+  text: string;
+  /** Auto-advance target after all chunks land at Meta. */
+  next_node_key: string;
+}
+
 export interface SendButtonsNodeConfig {
   text: string;
   /** Optional header / footer lines around the buttons. */
@@ -158,6 +172,7 @@ export type EndNodeConfig = Record<string, never>;
 export type FlowNodeConfig =
   | { node_type: "start"; config: StartNodeConfig }
   | { node_type: "send_message"; config: SendMessageNodeConfig }
+  | { node_type: "text_area"; config: TextAreaNodeConfig }
   | { node_type: "send_buttons"; config: SendButtonsNodeConfig }
   | { node_type: "send_list"; config: SendListNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
